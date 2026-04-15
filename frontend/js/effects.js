@@ -219,10 +219,11 @@ export function tickEffects(delta) {
   })
 
   // LIDAR sweep rotation
+  // Only update uAngle — the shader handles the visual rotation of the arc.
+  // Do NOT change rotation.z/y: the mesh lies flat via rotation.x=-PI/2 set at
+  // init time; changing another axis would tilt it out of the ground plane.
   if (lidarSweepMesh.visible) {
     lidarAngle += delta * 1.5   // ~1.5 rad/s ≈ one revolution per ~4 seconds
-    lidarSweepMesh.rotation.z = lidarAngle
-    // Update the arc shader uniform to match
     lidarSweepMesh.material.uniforms.uAngle.value = lidarAngle
     // Pulse lidar dome
     if (_parts.lidarDome) {
