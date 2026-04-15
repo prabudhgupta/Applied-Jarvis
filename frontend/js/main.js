@@ -97,6 +97,29 @@ buildTruck(scene).then(() => {
     apiPost('/api/alert', { component, severity })
   })
 
+  // ── Live telemetry drift ───────────────────────────────────────────────────
+  // The backend stores commanded state; natural sensor noise lives here in the
+  // frontend layer. Every 2s nudge tire PSI and engine temp by a tiny amount so
+  // the LIVE indicator actually means something during the demo.
+  setInterval(() => {
+    if (!currentState?.telemetry) return
+    const t = currentState.telemetry
+    const psi = t.tire_pressure_psi
+    updateHUD({
+      ...currentState,
+      telemetry: {
+        ...t,
+        tire_pressure_psi: {
+          fl: +(psi.fl + (Math.random() - 0.5) * 0.6).toFixed(1),
+          fr: +(psi.fr + (Math.random() - 0.5) * 0.6).toFixed(1),
+          rl: +(psi.rl + (Math.random() - 0.5) * 0.6).toFixed(1),
+          rr: +(psi.rr + (Math.random() - 0.5) * 0.6).toFixed(1),
+        },
+        engine_temp_c: +(t.engine_temp_c + (Math.random() - 0.5) * 1.0).toFixed(1),
+      },
+    })
+  }, 2000)
+
   // ── Animation loop ─────────────────────────────────────────────────────────
   startAnimationLoop(composer, controls, delta => {
     tickEffects(delta)

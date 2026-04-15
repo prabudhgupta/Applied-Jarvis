@@ -5,6 +5,11 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 
+// ── Particle state (module-level so startAnimationLoop can access it) ─────────
+const PARTICLE_COUNT = 500
+const PARTICLE_MAX_Y = 22
+let _particlePositionAttr = null   // set in initScene, read in startAnimationLoop
+
 /**
  * Initialise the Three.js scene, camera, renderer, OrbitControls, and the
  * EffectComposer bloom pipeline.
@@ -61,6 +66,31 @@ export function initScene(canvas) {
   grid.position.y = -1.8
   scene.add(grid)
 
+  // ── Particle atmosphere ────────────────────────────────────────────────────
+  // 500 faint cyan dust motes drifting slowly upward — gives the holodeck feel
+  // and makes the scene feel alive even before any buttons are pressed.
+  const particlePositions = new Float32Array(PARTICLE_COUNT * 3)
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    particlePositions[i * 3]     = (Math.random() - 0.5) * 70
+    particlePositions[i * 3 + 1] = Math.random() * PARTICLE_MAX_Y
+    particlePositions[i * 3 + 2] = (Math.random() - 0.5) * 70
+  }
+  const particleGeo = new THREE.BufferGeometry()
+  const posAttr = new THREE.BufferAttribute(particlePositions, 3)
+  posAttr.setUsage(THREE.DynamicDrawUsage)   // hint: positions change every frame
+  particleGeo.setAttribute('position', posAttr)
+  _particlePositionAttr = posAttr            // expose to startAnimationLoop
+
+  const particleMat = new THREE.PointsMaterial({
+    color: 0x00ffff,
+    size: 0.07,
+    transparent: true,
+    opacity: 0.3,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+  scene.add(new THREE.Points(particleGeo, particleMat))
+
   // ── EffectComposer: RenderPass → UnrealBloomPass → OutputPass ──────────────
   // IMPORTANT: always call composer.render() in the loop, never renderer.render()
   // IMPORTANT: OutputPass must be last — handles tone mapping for final output
@@ -105,6 +135,18 @@ export function startAnimationLoop(composer, controls, onFrame) {
     const delta = clock.getDelta()
     controls.update()       // needed for damping
     onFrame(delta)
+
+    // Drift particles upward; wrap back to y=0 when they exceed the ceiling
+    if (_particlePositionAttr) {
+      const arr   = _particlePositionAttr.array
+      const drift = delta * 0.3
+      for (let i = 0; i < PARTICLE_COUNT; i++) {
+        arr[i * 3 + 1] += drift
+        if (arr[i * 3 + 1] > PARTICLE_MAX_Y) arr[i * 3 + 1] = 0
+      }
+      _particlePositionAttr.needsUpdate = true
+    }
+
     composer.render()       // NOT renderer.render() — composer owns the output
   }
 
