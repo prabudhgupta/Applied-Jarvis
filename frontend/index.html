@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JARVIS // MINING SYSTEMS</title>
+  <link rel="stylesheet" href="./css/hud.css" />
+</head>
+<body>
+  <!-- Three.js renders into this canvas -->
+  <canvas id="app-canvas"></canvas>
+
+  <!-- HUD overlay — all absolutely positioned over the canvas -->
+  <div id="hud">
+
+    <!-- Top-left: vehicle status -->
+    <div class="hud-panel hud-tl" id="panel-status">
+      <div class="hud-corner hud-corner-tl"></div>
+      <div class="hud-corner hud-corner-tr"></div>
+      <div class="hud-corner hud-corner-bl"></div>
+      <div class="hud-corner hud-corner-br"></div>
+      <div class="label">VEHICLE STATUS</div>
+      <div class="row">MODE&nbsp;&nbsp;<span id="hud-mode" class="value value-amber">MANUAL</span></div>
+      <div class="row">BED&nbsp;&nbsp;&nbsp;<span id="hud-bed" class="value">LOWERED</span></div>
+      <div class="row">LIDAR&nbsp;<span id="hud-lidar" class="value">INACTIVE</span></div>
+    </div>
+
+    <!-- Top-right: telemetry -->
+    <div class="hud-panel hud-tr" id="panel-telemetry">
+      <div class="hud-corner hud-corner-tl"></div>
+      <div class="hud-corner hud-corner-tr"></div>
+      <div class="hud-corner hud-corner-bl"></div>
+      <div class="hud-corner hud-corner-br"></div>
+      <div class="label">TELEMETRY</div>
+      <div class="row">LOAD&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span id="hud-load" class="value">380 T</span></div>
+      <div class="row">SPEED&nbsp;&nbsp;&nbsp;&nbsp;<span id="hud-speed" class="value">0 KPH</span></div>
+      <div class="row">FUEL&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span id="hud-fuel" class="value">67%</span></div>
+      <div class="row">ENG TEMP&nbsp;<span id="hud-temp" class="value">92°C</span></div>
+    </div>
+
+    <!-- Bottom-left: tire pressure -->
+    <div class="hud-panel hud-bl" id="panel-tires">
+      <div class="hud-corner hud-corner-tl"></div>
+      <div class="hud-corner hud-corner-tr"></div>
+      <div class="hud-corner hud-corner-bl"></div>
+      <div class="hud-corner hud-corner-br"></div>
+      <div class="label">TIRE PSI</div>
+      <div class="tire-grid">
+        <span id="hud-tire-fl" class="value">FL: 100</span>
+        <span id="hud-tire-fr" class="value">FR: 100</span>
+        <span id="hud-tire-rl" class="value">RL: 98</span>
+        <span id="hud-tire-rr" class="value">RR: 100</span>
+      </div>
+    </div>
+
+    <!-- Bottom-right: connection status -->
+    <div class="hud-panel hud-br" id="panel-connection">
+      <div class="hud-corner hud-corner-tl"></div>
+      <div class="hud-corner hud-corner-tr"></div>
+      <div class="hud-corner hud-corner-bl"></div>
+      <div class="hud-corner hud-corner-br"></div>
+      <div class="label">SYSTEM</div>
+      <div class="row">LINK&nbsp;&nbsp;<span id="hud-connection" class="value value-warning">CONNECTING</span></div>
+      <div class="row live-row"><span class="live-dot"></span><span class="value-dim">LIVE FEED</span></div>
+    </div>
+
+    <!-- Center-bottom: alert banner (hidden by default) -->
+    <div id="hud-alert" class="hud-alert hidden">
+      ⚠ &nbsp;<span id="hud-alert-text">ALERT</span>
+    </div>
+
+    <!-- Control panel — buttons call REST API, WS broadcasts back -->
+    <div id="hud-controls">
+      <button class="hud-btn" id="btn-mode">TOGGLE MODE</button>
+      <button class="hud-btn" id="btn-bed">TOGGLE BED</button>
+      <button class="hud-btn" id="btn-lidar">TOGGLE LIDAR</button>
+      <button class="hud-btn" id="btn-alert">TRIGGER ALERT</button>
+    </div>
+
+  </div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
