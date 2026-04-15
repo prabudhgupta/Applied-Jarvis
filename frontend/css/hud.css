@@ -1,0 +1,231 @@
+/* ── Reset ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
+:root {
+  --cyan:        #00ffff;
+  --cyan-bright: #80ffff;
+  --cyan-mid:    rgba(0, 255, 255, 0.45);
+  --cyan-dim:    rgba(0, 255, 255, 0.12);
+  --amber:       #ffb300;
+  --green:       #00ff88;
+  --red:         #ff2244;
+  --red-dim:     rgba(255, 34, 68, 0.25);
+  --bg-panel:    rgba(0, 6, 14, 0.80);
+  --font:        'Courier New', 'Lucida Console', monospace;
+}
+
+/* ── Base ──────────────────────────────────────────────────────────────────── */
+html, body {
+  width: 100%;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+  font-family: var(--font);
+  color: var(--cyan);
+}
+
+/* Three.js canvas fills the viewport */
+#app-canvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* HUD sits above canvas; pointer-events: none so canvas still gets mouse */
+#hud {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ── Panel base ────────────────────────────────────────────────────────────── */
+.hud-panel {
+  position: absolute;
+  padding: 14px 18px 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--cyan-mid);
+  min-width: 185px;
+  pointer-events: auto;
+  /* Scanline texture */
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 3px,
+      rgba(0, 255, 255, 0.025) 3px,
+      rgba(0, 255, 255, 0.025) 4px
+    );
+}
+
+/* Panel positions */
+.hud-tl { top: 22px;    left: 22px;  }
+.hud-tr { top: 22px;    right: 22px; }
+.hud-bl { bottom: 90px; left: 22px;  }
+.hud-br { bottom: 90px; right: 22px; }
+
+/* ── Corner brackets ───────────────────────────────────────────────────────── */
+.hud-corner {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+}
+
+.hud-corner-tl { top: -1px;  left: -1px;  border-top: 2px solid var(--cyan); border-left:  2px solid var(--cyan); }
+.hud-corner-tr { top: -1px;  right: -1px; border-top: 2px solid var(--cyan); border-right: 2px solid var(--cyan); }
+.hud-corner-bl { bottom: -1px; left: -1px;  border-bottom: 2px solid var(--cyan); border-left:  2px solid var(--cyan); }
+.hud-corner-br { bottom: -1px; right: -1px; border-bottom: 2px solid var(--cyan); border-right: 2px solid var(--cyan); }
+
+/* ── Panel typography ──────────────────────────────────────────────────────── */
+.label {
+  font-size: 8px;
+  letter-spacing: 0.22em;
+  color: var(--cyan-mid);
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  user-select: none;
+}
+
+.row {
+  font-size: 11px;
+  color: rgba(0, 255, 255, 0.55);
+  margin-bottom: 5px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.value {
+  color: var(--cyan);
+  font-weight: bold;
+}
+
+.value-green   { color: var(--green); }
+.value-amber   { color: var(--amber); }
+.value-warning { color: var(--amber); }
+.value-alert   { color: var(--red);   }
+.value-dim     { color: rgba(0, 255, 255, 0.35); font-size: 10px; }
+
+/* ── Tire pressure grid ────────────────────────────────────────────────────── */
+.tire-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px 16px;
+  font-size: 11px;
+}
+
+/* ── LIVE dot ──────────────────────────────────────────────────────────────── */
+.live-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--red);
+  animation: livePulse 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes livePulse {
+  0%, 100% { opacity: 1;   box-shadow: 0 0 4px var(--red); }
+  50%       { opacity: 0.3; box-shadow: none; }
+}
+
+/* ── Alert banner ──────────────────────────────────────────────────────────── */
+.hud-alert {
+  position: absolute;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 28px;
+  background: var(--red-dim);
+  border: 1px solid var(--red);
+  color: var(--red);
+  font-size: 12px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: alertFlash 0.6s ease-in-out infinite alternate;
+}
+
+@keyframes alertFlash {
+  from { opacity: 1;   border-color: var(--red); }
+  to   { opacity: 0.35; border-color: rgba(255, 34, 68, 0.2); }
+}
+
+.hidden { display: none !important; }
+
+/* ── Control buttons ───────────────────────────────────────────────────────── */
+#hud-controls {
+  position: absolute;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.hud-btn {
+  background: transparent;
+  border: 1px solid var(--cyan-mid);
+  color: var(--cyan);
+  font-family: var(--font);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  text-transform: uppercase;
+  position: relative;
+  /* Corner brackets via pseudo-elements */
+}
+
+.hud-btn::before,
+.hud-btn::after {
+  content: '';
+  position: absolute;
+  width: 6px;
+  height: 6px;
+}
+
+.hud-btn::before {
+  top: -1px;
+  left: -1px;
+  border-top: 1px solid var(--cyan);
+  border-left: 1px solid var(--cyan);
+}
+
+.hud-btn::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 1px solid var(--cyan);
+  border-right: 1px solid var(--cyan);
+}
+
+.hud-btn:hover {
+  background: var(--cyan-dim);
+  border-color: var(--cyan);
+  color: var(--cyan-bright);
+}
+
+.hud-btn:active {
+  background: rgba(0, 255, 255, 0.22);
+}
