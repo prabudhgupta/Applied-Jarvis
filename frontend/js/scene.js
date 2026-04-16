@@ -38,7 +38,7 @@ export function initScene(canvas) {
   renderer.setSize(window.innerWidth, window.innerHeight)
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
   renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1.2
+  renderer.toneMappingExposure = 1.0
   // r152+ API — outputEncoding was removed
   renderer.outputColorSpace = THREE.SRGBColorSpace
 
@@ -99,9 +99,9 @@ export function initScene(canvas) {
 
   const bloom = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
-    1.2,   // strength — overall glow intensity
-    0.5,   // radius
-    0.15   // threshold — low value means even moderately bright cyan glows
+    0.5,   // strength — overall glow intensity
+    0.35,  // radius
+    0.72   // threshold — only genuinely bright pixels bloom
   )
   composer.addPass(bloom)
   composer.addPass(new OutputPass())   // must be last

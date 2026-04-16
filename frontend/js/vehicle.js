@@ -11,11 +11,11 @@ export function createHolographicMaterial(color = 0x00ffff) {
     uniforms: {
       uColor:       { value: new THREE.Color(color) },
       uTime:        { value: 0 },
-      uOpacity:     { value: 0.72 },
-      uFresnelPow:  { value: 3.2 },
+      uOpacity:     { value: 0.55 },
+      uFresnelPow:  { value: 4.5 },
       uScanSpeed:   { value: 0.35 },
       uScanDensity: { value: 70.0 },
-      uEmissive:    { value: 0.55 },
+      uEmissive:    { value: 0.28 },
       uAlertColor:  { value: new THREE.Color(0xff2244) },
       uAlertBlend:  { value: 0.0 },
     },
@@ -181,27 +181,61 @@ function buildProceduralTruck(scene) {
 
   // ── Dump bed ────────────────────────────────────────────────────────────────
   // bedGroup pivot is at the REAR edge of the chassis so rotation.x = hinge dump
+  // Signature Cat 797 shape: tall walls overhanging the chassis, a raised front
+  // canopy that extends FORWARD over the cab, and a wider stance than the frame.
   const bedGroup = new THREE.Group()
 
-  const dumpBed = makeMesh(new THREE.BoxGeometry(5.5, 0.4, 3.6), holo(0x008899))
-  dumpBed.position.set(2.75, 0, 0)    // local x=2.75 so the hinge is at x=0
+  const BED_LEN   = 7.0   // length along X (longer than chassis)
+  const BED_WIDTH = 4.6   // wider than the 4-unit chassis so it overhangs
+  const WALL_H    = 2.2   // tall walls — bed dominates the silhouette
+  const FLOOR_Y   = 0.0
+
+  // Bed floor
+  const dumpBed = makeMesh(new THREE.BoxGeometry(BED_LEN, 0.35, BED_WIDTH), holo(0x008899))
+  dumpBed.position.set(BED_LEN / 2, FLOOR_Y, 0)
   bedGroup.add(dumpBed)
 
+  // Side walls — flare slightly outward at the top (rotated around X for flare)
   const bedWallMat = holo(0x006677)
-  const bedWallL = makeMesh(new THREE.BoxGeometry(5.5, 1.2, 0.15), bedWallMat)
-  bedWallL.position.set(2.75, 0.8, 1.875)
+  const bedWallL = makeMesh(new THREE.BoxGeometry(BED_LEN, WALL_H, 0.18), bedWallMat)
+  bedWallL.position.set(BED_LEN / 2, WALL_H / 2 + 0.1, BED_WIDTH / 2 - 0.09)
+  bedWallL.rotation.x = -0.08   // slight outward flare
   bedGroup.add(bedWallL)
 
-  const bedWallR = makeMesh(new THREE.BoxGeometry(5.5, 1.2, 0.15), bedWallMat)
-  bedWallR.position.set(2.75, 0.8, -1.875)
+  const bedWallR = makeMesh(new THREE.BoxGeometry(BED_LEN, WALL_H, 0.18), bedWallMat)
+  bedWallR.position.set(BED_LEN / 2, WALL_H / 2 + 0.1, -(BED_WIDTH / 2 - 0.09))
+  bedWallR.rotation.x = 0.08
   bedGroup.add(bedWallR)
 
-  const bedFront = makeMesh(new THREE.BoxGeometry(0.15, 1.4, 3.6), bedWallMat)
-  bedFront.position.set(0, 0.7, 0)
-  bedGroup.add(bedFront)
+  // Rear tailgate wall (short)
+  const bedRear = makeMesh(new THREE.BoxGeometry(0.2, 1.1, BED_WIDTH), bedWallMat)
+  bedRear.position.set(0.1, 0.65, 0)
+  bedGroup.add(bedRear)
 
-  // Attach bedGroup at the rear of the chassis body
-  bedGroup.position.set(-3.5, 2.4, 0)
+  // Front wall — tall vertical section where the canopy attaches
+  const bedFrontWall = makeMesh(new THREE.BoxGeometry(0.2, WALL_H + 0.3, BED_WIDTH), bedWallMat)
+  bedFrontWall.position.set(BED_LEN - 0.1, (WALL_H + 0.3) / 2 + 0.1, 0)
+  bedGroup.add(bedFrontWall)
+
+  // Signature Cat 797 overhang canopy — extends FORWARD over the cab
+  const canopyMat = holo(0x007788)
+  const canopy = makeMesh(new THREE.BoxGeometry(3.2, 0.3, BED_WIDTH), canopyMat)
+  canopy.position.set(BED_LEN + 1.0, WALL_H + 0.4, 0)
+  bedGroup.add(canopy)
+
+  // Canopy support strut angling down from canopy front to cab roof area
+  const strut = makeMesh(new THREE.BoxGeometry(0.25, 1.6, 0.25), canopyMat)
+  strut.position.set(BED_LEN + 2.4, WALL_H - 0.4, BED_WIDTH / 2 - 0.3)
+  strut.rotation.z = 0.3
+  bedGroup.add(strut)
+
+  const strut2 = makeMesh(new THREE.BoxGeometry(0.25, 1.6, 0.25), canopyMat)
+  strut2.position.set(BED_LEN + 2.4, WALL_H - 0.4, -(BED_WIDTH / 2 - 0.3))
+  strut2.rotation.z = 0.3
+  bedGroup.add(strut2)
+
+  // Attach bedGroup at the rear of the chassis body — pivot at the hinge point
+  bedGroup.position.set(-4.0, 2.6, 0)
   truckGroup.add(bedGroup)
 
   // ── Lidar dome ──────────────────────────────────────────────────────────────
@@ -231,33 +265,33 @@ function buildProceduralTruck(scene) {
     return wheel
   }
 
-  // Front wheels (single per side)
-  const wfl = makeWheel(1.0, 0.9)
-  wfl.position.set(2.8, 0.0, 2.35)
+  // Front wheels (single per side) — bigger radius for haul-truck scale
+  const wfl = makeWheel(1.4, 1.0)
+  wfl.position.set(2.8, 0.0, 2.5)
   wheelGroup.add(wfl)
 
-  const wfr = makeWheel(1.0, 0.9)
-  wfr.position.set(2.8, 0.0, -2.35)
+  const wfr = makeWheel(1.4, 1.0)
+  wfr.position.set(2.8, 0.0, -2.5)
   wheelGroup.add(wfr)
 
   // Rear wheels (DUAL per side — characteristic haul truck feature)
-  const wrl1 = makeWheel(1.2, 0.95)
-  wrl1.position.set(-2.2, 0.15, 2.4)
+  const wrl1 = makeWheel(1.6, 1.0)
+  wrl1.position.set(-2.4, 0.0, 2.5)
   wheelGroup.add(wrl1)
 
-  const wrl2 = makeWheel(1.2, 0.95)
-  wrl2.position.set(-2.2, 0.15, 2.9)   // inner rear-left
+  const wrl2 = makeWheel(1.6, 1.0)
+  wrl2.position.set(-2.4, 0.0, 3.4)    // outer rear-left
   wheelGroup.add(wrl2)
 
-  const wrr1 = makeWheel(1.2, 0.95)
-  wrr1.position.set(-2.2, 0.15, -2.4)
+  const wrr1 = makeWheel(1.6, 1.0)
+  wrr1.position.set(-2.4, 0.0, -2.5)
   wheelGroup.add(wrr1)
 
-  const wrr2 = makeWheel(1.2, 0.95)
-  wrr2.position.set(-2.2, 0.15, -2.9)  // inner rear-right
+  const wrr2 = makeWheel(1.6, 1.0)
+  wrr2.position.set(-2.4, 0.0, -3.4)   // outer rear-right
   wheelGroup.add(wrr2)
 
-  wheelGroup.position.y = 1.2   // lift to ground contact
+  wheelGroup.position.y = 1.4   // lift to ground contact — matches new wheel radius
   truckGroup.add(wheelGroup)
 
   scene.add(truckGroup)
