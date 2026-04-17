@@ -133,7 +133,7 @@ export function initEffects(scene, parts) {
 // ── State-change setters (called from WebSocket handler) ─────────────────────
 
 export function updateBedAnimation(bedPosition) {
-  bedTargetAngle = bedPosition === 'raised' ? Math.PI * 0.27 : 0
+  bedTargetAngle = bedPosition === 'raised' ? Math.PI * 0.15 : 0
 }
 
 export function updateSensorCones(mode) {
@@ -200,12 +200,16 @@ export function tickEffects(delta) {
     }
   })
 
-  // Bed rotation — smooth lerp toward target
+  // Bed rotation — smooth lerp toward target.
+  // bedRotationSign accounts for hinge placement: procedural hinges at the
+  // group origin with bed extending +X (sign=1), segmented hinges at the
+  // rear with bed extending -X (sign=-1). Both produce front-lifts-up.
   const BED_SPEED = 1.4   // radians per second
   const bedDiff = bedTargetAngle - bedCurrentAngle
   if (Math.abs(bedDiff) > 0.0005) {
     bedCurrentAngle += Math.sign(bedDiff) * Math.min(Math.abs(bedDiff), BED_SPEED * delta)
-    _parts.bedGroup.rotation.x = bedCurrentAngle
+    const sign = _parts.bedRotationSign ?? 1
+    _parts.bedGroup.rotation.z = bedCurrentAngle * sign
   }
 
   // Sensor cone opacity fade
