@@ -16,11 +16,14 @@ import {
   initEffects,
   tickEffects,
   updateBedAnimation,
-  updateSensorCones,
   updateLidarSweep,
   updateAlertGlow,
+  updateWheelSpeed,
+  updateEngineTemp,
+  updateTirePressure,
 } from './effects.js'
-import { updateHUD }        from './hud.js'
+import { updateHUD }          from './hud.js'
+import { setCameraPreset }    from './scene.js'
 import { connectWebSocket } from './websocket.js'
 
 // ── Config (Vite env vars, with sensible dev defaults) ────────────────────────
@@ -58,9 +61,11 @@ buildTruck(scene).then(() => {
     currentState = state
     updateHUD(state)
     updateBedAnimation(state.bed_position)
-    updateSensorCones(state.mode)
     updateLidarSweep(state.lidar_active)
     updateAlertGlow(state.alert, parts)
+    updateWheelSpeed(state.telemetry?.speed_kph ?? 0)
+    updateEngineTemp(state.telemetry?.engine_temp_c ?? 92)
+    updateTirePressure(state.telemetry?.tire_pressure_psi)
   })
 
   // ── Button → REST API wiring ───────────────────────────────────────────────
@@ -68,8 +73,12 @@ buildTruck(scene).then(() => {
   // to all clients, which then drives the visual update.  We never update the
   // 3D scene directly from button clicks — everything goes through the WS loop.
 
-  document.getElementById('btn-mode').addEventListener('click', () => {
-    const next = currentState.mode === 'autonomous' ? 'manual' : 'autonomous'
+  let engineFailActive = false
+  const btnMode = document.getElementById('btn-mode')
+  btnMode.addEventListener('click', () => {
+    engineFailActive = !engineFailActive
+    const next = engineFailActive ? 'autonomous' : 'manual'
+    btnMode.classList.toggle('active', engineFailActive)
     apiPost('/api/mode', { mode: next })
   })
 
@@ -97,28 +106,18 @@ buildTruck(scene).then(() => {
     apiPost('/api/alert', { component, severity })
   })
 
-  // ── Live telemetry drift ───────────────────────────────────────────────────
-  // The backend stores commanded state; natural sensor noise lives here in the
-  // frontend layer. Every 2s nudge tire PSI and engine temp by a tiny amount so
-  // the LIVE indicator actually means something during the demo.
-  setInterval(() => {
-    if (!currentState?.telemetry) return
-    const t = currentState.telemetry
-    const psi = t.tire_pressure_psi
-    updateHUD({
-      ...currentState,
-      telemetry: {
-        ...t,
-        tire_pressure_psi: {
-          fl: +(psi.fl + (Math.random() - 0.5) * 0.6).toFixed(1),
-          fr: +(psi.fr + (Math.random() - 0.5) * 0.6).toFixed(1),
-          rl: +(psi.rl + (Math.random() - 0.5) * 0.6).toFixed(1),
-          rr: +(psi.rr + (Math.random() - 0.5) * 0.6).toFixed(1),
-        },
-        engine_temp_c: +(t.engine_temp_c + (Math.random() - 0.5) * 1.0).toFixed(1),
-      },
-    })
-  }, 2000)
+  let tireFailActive = false
+  const btnTire = document.getElementById('btn-tire-fail')
+  btnTire.addEventListener('click', () => {
+    tireFailActive = !tireFailActive
+    btnTire.classList.toggle('active', tireFailActive)
+    apiPost('/api/tire-fail', { active: tireFailActive, wheel: 'rl' })
+  })
+
+  // Camera presets — purely client-side, no backend round-trip needed
+  document.getElementById('btn-cam-top').addEventListener('click', () => setCameraPreset('TOP'))
+  document.getElementById('btn-cam-side').addEventListener('click', () => setCameraPreset('SIDE'))
+  document.getElementById('btn-cam-operator').addEventListener('click', () => setCameraPreset('OPERATOR'))
 
   // ── Animation loop ─────────────────────────────────────────────────────────
   startAnimationLoop(composer, controls, delta => {

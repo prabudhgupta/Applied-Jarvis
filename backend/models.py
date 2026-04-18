@@ -17,9 +17,25 @@ class Telemetry(BaseModel):
     speed_kph: float = 0
 
 
+class PredictionItem(BaseModel):
+    component: str
+    current_value: float
+    threshold: float
+    slope_per_sec: float
+    seconds_to_threshold: Optional[float] = None
+    severity: str = "normal"
+
+
+class HistoryPoint(BaseModel):
+    t: float
+    v: float
+
+
 class VehicleState(BaseModel):
     mode: Literal["autonomous", "manual"] = "manual"
     bed_position: Literal["raised", "lowered"] = "lowered"
     lidar_active: bool = False
     alert: Optional[dict] = None
     telemetry: Telemetry = Telemetry()
+    predictions: list[PredictionItem] = []
+    telemetry_history: dict[str, list[HistoryPoint]] = {}

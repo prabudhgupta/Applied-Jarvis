@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { getGrid, getRoadGroup } from './scene.js'
 
 // ── Module-level state (targets + current values) ────────────────────────────
 // WebSocket state-change callbacks only SET TARGETS.
@@ -12,9 +13,6 @@ let _parts = null
 let bedTargetAngle  = 0
 let bedCurrentAngle = 0
 
-// Sensor cones (appear in autonomous mode)
-let sensorCones        = []
-let coneTargetOpacity  = 0
 
 // LIDAR sweep
 let lidarSweepMesh  = null
@@ -24,8 +22,21 @@ let lidarTargetVis  = false   // true = should be visible
 // Alert overlay meshes — keyed by component name
 let alertOverlays = {}
 
+// Wheel rotation
+let wheelTargetSpeed  = 0   // kph
+let wheelCurrentSpeed = 0   // kph (lerped)
+
+// Engine heat color
+let engineTempTarget = 92
+let engineHeatOverlay = null
+
 // Elapsed time for shader uTime uniform
 let elapsedTime = 0
+
+const _colorYellow = new THREE.Color(0xffcc00)
+const _colorOrange = new THREE.Color(0xff6600)
+const _colorRed    = new THREE.Color(0xff2244)
+const _tempColor   = new THREE.Color()
 
 // ── Component → mesh resolver ─────────────────────────────────────────────────
 function resolveComponentMesh(component, parts) {
@@ -51,32 +62,29 @@ export function initEffects(scene, parts) {
   _scene = scene
   _parts = parts
 
-  // Sensor cones — one at each corner of the truck, pointing outward-down
-  const conePositions = [
-    { x:  3.2, z:  2.2, ry:  Math.PI * 0.25 },   // front-left
-    { x:  3.2, z: -2.2, ry: -Math.PI * 0.25 },   // front-right
-    { x: -3.2, z:  2.2, ry:  Math.PI * 0.75 },   // rear-left
-    { x: -3.2, z: -2.2, ry: -Math.PI * 0.75 },   // rear-right
-  ]
-
-  conePositions.forEach(({ x, z, ry }) => {
-    const geo = new THREE.ConeGeometry(2.2, 5.0, 18, 1, true)
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0x00ffff,
-      transparent: true,
-      opacity: 0,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    })
-    const cone = new THREE.Mesh(geo, mat)
-    // Tip at origin — tilt outward and down
-    cone.rotation.z = Math.PI * 0.7   // tilt toward ground
-    cone.rotation.y = ry
-    cone.position.set(x, 1.8, z)
-    scene.add(cone)
-    sensorCones.push(cone)
+  // Engine heat overlay — positioned at the engine area of the truck
+  const engineBB = new THREE.Box3().setFromObject(parts.engineHood || parts.bodyGroup)
+  const center = new THREE.Vector3()
+  const size = new THREE.Vector3()
+  engineBB.getCenter(center)
+  engineBB.getSize(size)
+  const overlayGeo = new THREE.BoxGeometry(size.x * 0.35, size.y * 0.6, size.z * 0.8)
+  const overlayMat = new THREE.MeshBasicMaterial({
+    color: 0xffcc00,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
   })
+  engineHeatOverlay = new THREE.Mesh(overlayGeo, overlayMat)
+  engineHeatOverlay.position.set(
+    center.x - size.x * 0.25,
+    center.y + size.y * 0.15,
+    center.z
+  )
+  engineHeatOverlay.visible = false
+  scene.add(engineHeatOverlay)
 
   // LIDAR sweep — a horizontal rotating plane with an arc shader
   // Only the leading 30° arc is drawn; rotation.y accumulates to sweep 360°
@@ -128,6 +136,7 @@ export function initEffects(scene, parts) {
   lidarSweepMesh.position.set(0, 0.4, 0)
   lidarSweepMesh.visible = false
   scene.add(lidarSweepMesh)
+
 }
 
 // ── State-change setters (called from WebSocket handler) ─────────────────────
@@ -136,8 +145,35 @@ export function updateBedAnimation(bedPosition) {
   bedTargetAngle = bedPosition === 'raised' ? Math.PI * 0.15 : 0
 }
 
-export function updateSensorCones(mode) {
-  coneTargetOpacity = mode === 'autonomous' ? 0.55 : 0
+
+export function updateWheelSpeed(speedKph) {
+  wheelTargetSpeed = speedKph
+}
+
+export function updateEngineTemp(tempC) {
+  engineTempTarget = tempC
+}
+
+export function updateTirePressure(tirePsi) {
+  if (!_parts?.wheels || !tirePsi) return
+  const WARN = 94
+  const CRIT = 89
+  for (const [key, wheel] of Object.entries(_parts.wheels)) {
+    if (!wheel) continue
+    const psi = tirePsi[key]
+    if (psi === undefined) continue
+    let color
+    if (psi <= CRIT) color = new THREE.Color(0xff2244)
+    else if (psi <= WARN) color = new THREE.Color(0xffb300)
+    else color = new THREE.Color(0x00ffff)
+    wheel.traverse(child => {
+      if (child.material?.uniforms?.uColor) {
+        child.material.uniforms.uColor.value.copy(color)
+      } else if (child.material?.color) {
+        child.material.color.copy(color)
+      }
+    })
+  }
 }
 
 export function updateLidarSweep(active) {
@@ -212,16 +248,6 @@ export function tickEffects(delta) {
     _parts.bedGroup.rotation.z = bedCurrentAngle * sign
   }
 
-  // Sensor cone opacity fade
-  const CONE_SPEED = 1.8  // opacity units per second
-  sensorCones.forEach(cone => {
-    const diff = coneTargetOpacity - cone.material.opacity
-    if (Math.abs(diff) > 0.001) {
-      cone.material.opacity += Math.sign(diff) * Math.min(Math.abs(diff), CONE_SPEED * delta)
-    }
-    cone.visible = cone.material.opacity > 0.005
-  })
-
   // LIDAR sweep rotation
   // Only update uAngle — the shader handles the visual rotation of the arc.
   // Do NOT change rotation.z/y: the mesh lies flat via rotation.x=-PI/2 set at
@@ -242,4 +268,59 @@ export function tickEffects(delta) {
   Object.values(alertOverlays).forEach(mesh => {
     mesh.material.opacity = 0.45 + Math.sin(elapsedTime * 6.0) * 0.2
   })
+
+  // Wheel rotation — lerp speed, then spin proportionally
+  const WHEEL_ACCEL = 40
+  const speedDiff = wheelTargetSpeed - wheelCurrentSpeed
+  if (Math.abs(speedDiff) > 0.01) {
+    wheelCurrentSpeed += Math.sign(speedDiff) * Math.min(Math.abs(speedDiff), WHEEL_ACCEL * delta)
+  }
+  if (_parts?.wheels && Math.abs(wheelCurrentSpeed) > 0.01) {
+    const wheelRadius = _parts.wheelRadius || 1.4
+    const omega = ((wheelCurrentSpeed / 3.6) / wheelRadius) * 3
+    const rotIncrement = omega * delta
+    for (const w of Object.values(_parts.wheels)) {
+      if (w) w.rotation.y += rotIncrement
+    }
+  }
+
+  // Engine heat overlay — glow from yellow → orange → red at the engine area
+  if (engineHeatOverlay) {
+    const t = engineTempTarget
+    let targetOpacity = 0
+    if (t <= 96) {
+      targetOpacity = 0
+    } else if (t <= 100) {
+      const f = (t - 96) / 4
+      _tempColor.copy(_colorYellow)
+      targetOpacity = f * 0.35
+    } else if (t <= 103) {
+      const f = (t - 100) / 3
+      _tempColor.copy(_colorYellow).lerp(_colorOrange, f)
+      targetOpacity = 0.35 + f * 0.2
+    } else {
+      const f = Math.min((t - 103) / 2, 1)
+      _tempColor.copy(_colorOrange).lerp(_colorRed, f)
+      targetOpacity = 0.55 + f * 0.15
+    }
+
+    engineHeatOverlay.material.color.lerp(_tempColor, 0.08)
+    const opDiff = targetOpacity - engineHeatOverlay.material.opacity
+    engineHeatOverlay.material.opacity += opDiff * 0.05
+    engineHeatOverlay.visible = engineHeatOverlay.material.opacity > 0.01
+  }
+
+  // Grid + road scroll — moves the ground to simulate truck driving forward
+  const grid = getGrid()
+  const road = getRoadGroup()
+  if (grid && Math.abs(wheelCurrentSpeed) > 0.01) {
+    const scrollSpeed = (wheelCurrentSpeed / 3.6) * delta
+    grid.position.x -= scrollSpeed
+    if (grid.position.x < -2) grid.position.x += 2
+    if (road) {
+      road.position.x -= scrollSpeed
+      if (road.position.x < -4) road.position.x += 4
+    }
+  }
+
 }

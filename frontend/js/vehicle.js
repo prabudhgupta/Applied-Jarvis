@@ -417,6 +417,7 @@ function assembleFromFeatures(scene, geom) {
     bedRotationSign: -1,   // hinge at rear → negative rotation.z lifts front (Cat 797 style)
     lidarDome,
     wheels,
+    wheelRadius: truckHeight * 0.28,
     allMaterials,
   }
   return _parts
@@ -424,21 +425,69 @@ function assembleFromFeatures(scene, geom) {
 
 function buildDetectedWheels(positions, truckHeight, truckDepth, allMaterials) {
   const wheels = { fl: null, fr: null, rl: null, rr: null }
-  const radius = truckHeight * 0.28   // mining haul trucks have massive tires
+  const radius = truckHeight * 0.28
   const width  = truckDepth  * 0.14
   for (const [key, { x, z }] of Object.entries(positions)) {
     const mat = createHolographicMaterial(0x007799)
     allMaterials.push(mat)
-    const mesh = new THREE.Mesh(
+    const group = new THREE.Group()
+    group.position.set(x, radius, z)
+    group.rotation.x = Math.PI / 2
+
+    const rim = new THREE.Mesh(
       new THREE.CylinderGeometry(radius, radius, width, 24),
       mat
     )
-    mesh.rotation.x = Math.PI / 2   // axle along Z (truck width)
-    mesh.position.set(x, radius, z)
-    console.log(`[vehicle] Wheel ${key} at (${x.toFixed(1)}, ${radius.toFixed(1)}, ${z.toFixed(1)}), r=${radius.toFixed(2)}`)
-    wheels[key] = mesh
+    group.add(rim)
+
+    addWheelRim(group, radius, width, allMaterials)
+
+    wheels[key] = group
   }
   return wheels
+}
+
+function addWheelRim(wheelGroup, radius, width, allMaterials) {
+  const rimMat = new THREE.MeshBasicMaterial({
+    color: 0x00ffff,
+    transparent: true,
+    opacity: 0.7,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+  allMaterials.push(rimMat)
+
+  const barThick = radius * 0.08
+  const barLen   = radius * 1.7
+  const zOff     = width * 0.3
+
+  const bar1 = new THREE.Mesh(
+    new THREE.BoxGeometry(barLen, barThick, barThick),
+    rimMat
+  )
+  bar1.position.z = zOff
+  wheelGroup.add(bar1)
+
+  const bar2 = new THREE.Mesh(
+    new THREE.BoxGeometry(barThick, barLen, barThick),
+    rimMat
+  )
+  bar2.position.z = zOff
+  wheelGroup.add(bar2)
+
+  const hubGeo = new THREE.CylinderGeometry(radius * 0.15, radius * 0.15, barThick * 1.5, 12)
+  const hub = new THREE.Mesh(hubGeo, rimMat)
+  hub.position.z = zOff
+  hub.rotation.x = Math.PI / 2
+  wheelGroup.add(hub)
+
+  const outerRing = new THREE.Mesh(
+    new THREE.TorusGeometry(radius * 0.92, barThick * 0.5, 8, 32),
+    rimMat
+  )
+  outerRing.position.z = zOff
+  wheelGroup.add(outerRing)
 }
 
 // ── Procedural fallback ───────────────────────────────────────────────────────

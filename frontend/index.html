@@ -64,6 +64,25 @@
       <div class="row live-row"><span class="live-dot"></span><span class="value-dim">LIVE FEED</span></div>
     </div>
 
+    <!-- Center-left: predictive analytics -->
+    <div class="hud-panel hud-analytics" id="panel-analytics">
+      <div class="hud-corner hud-corner-tl"></div>
+      <div class="hud-corner hud-corner-tr"></div>
+      <div class="hud-corner hud-corner-bl"></div>
+      <div class="hud-corner hud-corner-br"></div>
+      <div class="label">PREDICTIVE ANALYTICS</div>
+      <div class="analytics-row">
+        <span class="analytics-label">ENG TEMP</span>
+        <canvas id="sparkline-engine" class="sparkline-canvas" width="160" height="40"></canvas>
+      </div>
+      <div id="prediction-engine" class="prediction-text"></div>
+      <div class="analytics-row" style="margin-top:6px">
+        <span class="analytics-label">TIRE PSI</span>
+        <canvas id="sparkline-tire" class="sparkline-canvas" width="160" height="40"></canvas>
+      </div>
+      <div id="prediction-tire" class="prediction-text"></div>
+    </div>
+
     <!-- Center-bottom: alert banner (hidden by default) -->
     <div id="hud-alert" class="hud-alert hidden">
       ⚠ &nbsp;<span id="hud-alert-text">ALERT</span>
@@ -71,10 +90,15 @@
 
     <!-- Control panel — buttons call REST API, WS broadcasts back -->
     <div id="hud-controls">
-      <button class="hud-btn" id="btn-mode">TOGGLE MODE</button>
+      <button class="hud-btn" id="btn-mode">SIM ENGINE FAIL</button>
+      <button class="hud-btn" id="btn-tire-fail">SIM TIRE FAIL</button>
       <button class="hud-btn" id="btn-bed">TOGGLE BED</button>
       <button class="hud-btn" id="btn-lidar">TOGGLE LIDAR</button>
       <button class="hud-btn" id="btn-alert">TRIGGER ALERT</button>
+      <span class="hud-btn-sep"></span>
+      <button class="hud-btn hud-btn-cam" id="btn-cam-top">TOP</button>
+      <button class="hud-btn hud-btn-cam" id="btn-cam-side">SIDE</button>
+      <button class="hud-btn hud-btn-cam" id="btn-cam-operator">OPERATOR</button>
     </div>
 
   </div>

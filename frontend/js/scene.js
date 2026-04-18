@@ -9,6 +9,39 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 const PARTICLE_COUNT = 500
 const PARTICLE_MAX_Y = 22
 let _particlePositionAttr = null   // set in initScene, read in startAnimationLoop
+let _grid = null                   // grid floor, scrolled by effects to simulate movement
+let _roadGroup = null              // road markings, scrolled with grid
+
+// ── Camera preset animation state ────────────────────────────────────────────
+let _camera = null
+let _controls = null
+let _camAnimating = false
+let _camAnimT = 0
+const _camStartPos    = new THREE.Vector3()
+const _camStartTarget = new THREE.Vector3()
+const _camEndPos      = new THREE.Vector3()
+const _camEndTarget   = new THREE.Vector3()
+const CAM_ANIM_DURATION = 1.0
+
+const CAMERA_PRESETS = {
+  TOP:      { pos: [0, 35, 0.1],    target: [0, 0, 0] },
+  SIDE:     { pos: [0, 4, 22],      target: [0, 2, 0] },
+  OPERATOR: { pos: [-3, 5, 1.5],    target: [4, 2, 0] },
+}
+
+export function getGrid() { return _grid }
+export function getRoadGroup() { return _roadGroup }
+
+export function setCameraPreset(name) {
+  const preset = CAMERA_PRESETS[name]
+  if (!preset || !_camera || !_controls) return
+  _camStartPos.copy(_camera.position)
+  _camStartTarget.copy(_controls.target)
+  _camEndPos.set(...preset.pos)
+  _camEndTarget.set(...preset.target)
+  _camAnimT = 0
+  _camAnimating = true
+}
 
 /**
  * Initialise the Three.js scene, camera, renderer, OrbitControls, and the
@@ -65,6 +98,64 @@ export function initScene(canvas) {
   const grid = new THREE.GridHelper(80, 40, 0x003344, 0x001a22)
   grid.position.y = -1.8
   scene.add(grid)
+  _grid = grid
+
+  // ── Haul road ──────────────────────────────────────────────────────────────
+  const roadGroup = new THREE.Group()
+  roadGroup.position.y = -1.79
+
+  // Road surface — subtle dark plane under the truck
+  const roadSurface = new THREE.Mesh(
+    new THREE.PlaneGeometry(120, 8),
+    new THREE.MeshBasicMaterial({
+      color: 0x001a22,
+      transparent: true,
+      opacity: 0.6,
+      depthWrite: false,
+    })
+  )
+  roadSurface.rotation.x = -Math.PI / 2
+  roadGroup.add(roadSurface)
+
+  // Road edge lines
+  const edgeLineMat = new THREE.MeshBasicMaterial({
+    color: 0x00ffff,
+    transparent: true,
+    opacity: 0.25,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+  const edgeGeo = new THREE.PlaneGeometry(120, 0.08)
+  const leftEdge = new THREE.Mesh(edgeGeo, edgeLineMat)
+  leftEdge.rotation.x = -Math.PI / 2
+  leftEdge.position.z = 4
+  roadGroup.add(leftEdge)
+
+  const rightEdge = new THREE.Mesh(edgeGeo.clone(), edgeLineMat)
+  rightEdge.rotation.x = -Math.PI / 2
+  rightEdge.position.z = -4
+  roadGroup.add(rightEdge)
+
+  // Center dashes
+  const dashMat = new THREE.MeshBasicMaterial({
+    color: 0x005566,
+    transparent: true,
+    opacity: 0.3,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+  for (let i = -30; i < 30; i++) {
+    const dash = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.2, 0.06),
+      dashMat
+    )
+    dash.rotation.x = -Math.PI / 2
+    dash.position.x = i * 2
+    roadGroup.add(dash)
+  }
+
+  scene.add(roadGroup)
+  _roadGroup = roadGroup
 
   // ── Particle atmosphere ────────────────────────────────────────────────────
   // 500 faint cyan dust motes drifting slowly upward — gives the holodeck feel
@@ -117,6 +208,9 @@ export function initScene(canvas) {
     bloom.resolution.set(w, h)
   })
 
+  _camera = camera
+  _controls = controls
+
   return { scene, camera, renderer, composer, controls }
 }
 
@@ -133,6 +227,18 @@ export function startAnimationLoop(composer, controls, onFrame) {
   function tick() {
     requestAnimationFrame(tick)
     const delta = clock.getDelta()
+
+    // Camera preset animation (smooth ease-in-out)
+    if (_camAnimating) {
+      _camAnimT += delta / CAM_ANIM_DURATION
+      if (_camAnimT >= 1) { _camAnimT = 1; _camAnimating = false }
+      const t = _camAnimT < 0.5
+        ? 2 * _camAnimT * _camAnimT
+        : 1 - Math.pow(-2 * _camAnimT + 2, 2) / 2
+      _camera.position.lerpVectors(_camStartPos, _camEndPos, t)
+      _controls.target.lerpVectors(_camStartTarget, _camEndTarget, t)
+    }
+
     controls.update()       // needed for damping
     onFrame(delta)
 
