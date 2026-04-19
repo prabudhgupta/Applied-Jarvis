@@ -25,6 +25,7 @@ import {
 import { updateHUD }          from './hud.js'
 import { setCameraPreset }    from './scene.js'
 import { connectWebSocket } from './websocket.js'
+import { initVoice, speakAlert } from './voice.js'
 
 // ── Config (Vite env vars, with sensible dev defaults) ────────────────────────
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
@@ -56,6 +57,37 @@ buildTruck(scene).then(() => {
   // Initialise effects after parts are available
   initEffects(scene, parts)
 
+  // ── Spoken prediction alerts ────────────────────────────────────────────────
+  let lastSpokenAlert = null
+  const ALERT_INTERVALS = [60, 45, 30, 15, 10, 5]
+
+  function checkSpokenAlerts(predictions) {
+    if (!predictions) return
+    for (const pred of predictions) {
+      if (pred.severity === 'normal') continue
+      const secs = pred.seconds_to_threshold
+      if (secs === null || secs === undefined || secs <= 0) {
+        if (lastSpokenAlert !== `${pred.component}_now`) {
+          const label = pred.component === 'engine_temp_c' ? 'Engine' : 'Tire'
+          speakAlert(`Warning. ${label} failure imminent.`)
+          lastSpokenAlert = `${pred.component}_now`
+        }
+        continue
+      }
+      for (const threshold of ALERT_INTERVALS) {
+        if (secs <= threshold + 2 && secs >= threshold - 2) {
+          const alertKey = `${pred.component}_${threshold}`
+          if (lastSpokenAlert !== alertKey) {
+            const label = pred.component === 'engine_temp_c' ? 'Engine' : 'Tire'
+            speakAlert(`${label} critical in approximately ${threshold} seconds.`)
+            lastSpokenAlert = alertKey
+          }
+          break
+        }
+      }
+    }
+  }
+
   // ── WebSocket ──────────────────────────────────────────────────────────────
   connectWebSocket(WS_URL, state => {
     currentState = state
@@ -66,6 +98,7 @@ buildTruck(scene).then(() => {
     updateWheelSpeed(state.telemetry?.speed_kph ?? 0)
     updateEngineTemp(state.telemetry?.engine_temp_c ?? 92)
     updateTirePressure(state.telemetry?.tire_pressure_psi)
+    checkSpokenAlerts(state.predictions)
   })
 
   // ── Button → REST API wiring ───────────────────────────────────────────────
@@ -118,6 +151,34 @@ buildTruck(scene).then(() => {
   document.getElementById('btn-cam-top').addEventListener('click', () => setCameraPreset('TOP'))
   document.getElementById('btn-cam-side').addEventListener('click', () => setCameraPreset('SIDE'))
   document.getElementById('btn-cam-operator').addEventListener('click', () => setCameraPreset('OPERATOR'))
+
+  // ── Voice control ──────────────────────────────────────────────────────────
+  const voiceStatusEl = document.getElementById('voice-status')
+  initVoice(action => {
+    const actions = {
+      engine_start: () => { if (!engineFailActive) btnMode.click() },
+      engine_stop:  () => { if (engineFailActive) btnMode.click() },
+      tire_start:   () => { if (!tireFailActive) btnTire.click() },
+      tire_stop:    () => { if (tireFailActive) btnTire.click() },
+      bed_raise:    () => { if (currentState.bed_position === 'lowered') apiPost('/api/bed', { position: 'raised' }) },
+      bed_lower:    () => { if (currentState.bed_position === 'raised') apiPost('/api/bed', { position: 'lowered' }) },
+      lidar_on:     () => { if (!currentState.lidar_active) apiPost('/api/lidar', { active: true }) },
+      lidar_off:    () => { if (currentState.lidar_active) apiPost('/api/lidar', { active: false }) },
+      cam_top:      () => setCameraPreset('TOP'),
+      cam_side:     () => setCameraPreset('SIDE'),
+      cam_operator: () => setCameraPreset('OPERATOR'),
+      status:       () => {
+        const t = currentState.telemetry
+        const statusMsg = `Engine temperature ${Math.round(t.engine_temp_c)} degrees. ` +
+          `Speed ${Math.round(t.speed_kph)} kilometers per hour. ` +
+          `Fuel at ${Math.round(t.fuel_percent)} percent. ` +
+          `Mode: ${currentState.mode}.`
+        speakAlert(statusMsg)
+      },
+      sleep: () => {},
+    }
+    if (actions[action]) actions[action]()
+  }, voiceStatusEl)
 
   // ── Animation loop ─────────────────────────────────────────────────────────
   startAnimationLoop(composer, controls, delta => {

@@ -4,8 +4,10 @@ import random
 from contextlib import asynccontextmanager
 from typing import Set
 
+import httpx
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
 from models import VehicleState, PredictionItem, HistoryPoint
 from anomaly import AnomalyDetector
@@ -37,6 +39,10 @@ app.add_middleware(
 state = VehicleState()
 clients: Set[WebSocket] = set()
 detector = AnomalyDetector()
+
+# ElevenLabs TTS
+ELEVENLABS_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+ELEVENLABS_VOICE = "u8GDilEiJPUbRk87Lcqs"
 
 # Baseline values
 ENGINE_BASELINE = 92.0
@@ -166,6 +172,29 @@ async def trigger_alert(payload: dict):
 
     asyncio.create_task(_auto_clear(alert_value))
     return state
+
+
+# ── TTS endpoint (ElevenLabs) ─────────────────────────────────────────────────
+
+@app.post("/api/speak")
+async def speak(payload: dict):
+    text = payload.get("text", "")
+    if not text or not ELEVENLABS_KEY:
+        return {"error": "No text or API key"}, 400
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE}",
+            headers={"xi-api-key": ELEVENLABS_KEY, "Content-Type": "application/json"},
+            json={
+                "text": text,
+                "model_id": "eleven_monolingual_v1",
+                "voice_settings": {"stability": 0.65, "similarity_boost": 0.75},
+            },
+            timeout=10.0,
+        )
+    if resp.status_code != 200:
+        return {"error": f"ElevenLabs returned {resp.status_code}"}, 502
+    return Response(content=resp.content, media_type="audio/mpeg")
 
 
 # ── WebSocket endpoint ────────────────────────────────────────────────────────
