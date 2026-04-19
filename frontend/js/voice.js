@@ -21,6 +21,7 @@ let _listenTimeout = null
 let recognition = null
 let _audioQueue = []
 let _isPlaying = false
+let _isSpeaking = false  // true while TTS is playing — pause recognition
 
 const COMMANDS = [
   { phrases: ['engine simulation', 'engine failure', 'start engine', 'simulate engine'],
@@ -47,7 +48,7 @@ const COMMANDS = [
     action: 'cam_operator', response: 'Switching to operator cab view.' },
   { phrases: ['status', 'status report', 'report', 'how are things'],
     action: 'status', response: null },
-  { phrases: ['go to sleep', 'sleep', 'stand by', 'goodbye'],
+  { phrases: ['go to sleep', 'sleep', 'stand by', 'goodbye', 'jarvis stand by', 'jarvis sleep'],
     action: 'sleep', response: 'Standing by. Say "Jarvis wake up" when you need me.' },
 ]
 
@@ -56,9 +57,28 @@ function speak(text) {
   if (!_isPlaying) _playNext()
 }
 
+function _pauseRecognition() {
+  _isSpeaking = true
+  if (recognition) try { recognition.stop() } catch (e) { /* ok */ }
+}
+
+function _resumeRecognition() {
+  _isSpeaking = false
+  if (recognition) {
+    setTimeout(() => {
+      try { recognition.start() } catch (e) { /* ok */ }
+    }, 400)
+  }
+}
+
 async function _playNext() {
-  if (_audioQueue.length === 0) { _isPlaying = false; return }
+  if (_audioQueue.length === 0) {
+    _isPlaying = false
+    _resumeRecognition()
+    return
+  }
   _isPlaying = true
+  _pauseRecognition()
   const text = _audioQueue.shift()
 
   try {
@@ -171,7 +191,10 @@ export function initVoice(onCommand, statusElement) {
         setStatus('sleeping')
       }
     } else {
-      speak('I didn\'t catch that. Try again.')
+      // Ignore short/noise transcripts silently
+      if (transcript.length > 3) {
+        console.log(`[voice] No match for: "${transcript}"`)
+      }
       enterListeningMode()
     }
   }
@@ -190,10 +213,12 @@ export function initVoice(onCommand, statusElement) {
 
   let restartTimer = null
   recognition.onend = () => {
+    // Don't restart while Jarvis is speaking — it would hear its own voice
+    if (_isSpeaking) return
     clearTimeout(restartTimer)
     restartTimer = setTimeout(() => {
       try { recognition.start() } catch (e) { /* already started */ }
-    }, 300)
+    }, 500)
   }
 
   setStatus('sleeping')
