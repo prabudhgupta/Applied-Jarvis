@@ -3,12 +3,12 @@ services:
     name: applied-jarvis-api
     runtime: python
     region: oregon
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     # IMPORTANT: must use $PORT — Render injects this; hardcoding 8000 fails
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
-        value: "3.11.0"
+        value: "3.11.11"
       # Set FRONTEND_URL in the Render dashboard to your Vercel URL (no trailing slash)
       # e.g. https://applied-jarvis.vercel.app
       - key: FRONTEND_URL
