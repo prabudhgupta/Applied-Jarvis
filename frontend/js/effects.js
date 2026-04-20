@@ -19,8 +19,6 @@ let lidarSweepMesh  = null
 let lidarAngle      = 0
 let lidarTargetVis  = false   // true = should be visible
 
-// Alert overlay meshes — keyed by component name
-let alertOverlays = {}
 
 // Wheel rotation
 let wheelTargetSpeed  = 0   // kph
@@ -28,7 +26,6 @@ let wheelCurrentSpeed = 0   // kph (lerped)
 
 // Engine heat color
 let engineTempTarget = 92
-let engineHeatOverlay = null
 
 // Elapsed time for shader uTime uniform
 let elapsedTime = 0
@@ -62,29 +59,8 @@ export function initEffects(scene, parts) {
   _scene = scene
   _parts = parts
 
-  // Engine heat overlay — positioned at the engine area of the truck
-  const engineBB = new THREE.Box3().setFromObject(parts.engineHood || parts.bodyGroup)
-  const center = new THREE.Vector3()
-  const size = new THREE.Vector3()
-  engineBB.getCenter(center)
-  engineBB.getSize(size)
-  const overlayGeo = new THREE.BoxGeometry(size.x * 0.35, size.y * 0.6, size.z * 0.8)
-  const overlayMat = new THREE.MeshBasicMaterial({
-    color: 0xffcc00,
-    transparent: true,
-    opacity: 0,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-  })
-  engineHeatOverlay = new THREE.Mesh(overlayGeo, overlayMat)
-  engineHeatOverlay.position.set(
-    center.x - size.x * 0.25,
-    center.y + size.y * 0.15,
-    center.z
-  )
-  engineHeatOverlay.visible = false
-  scene.add(engineHeatOverlay)
+  // Engine heat — tint the actual engineHood mesh via its uAlertBlend uniform
+  // (no separate overlay geometry needed since we own the mesh)
 
   // LIDAR sweep — a horizontal rotating plane with an arc shader
   // Only the leading 30° arc is drawn; rotation.y accumulates to sweep 360°
@@ -186,37 +162,40 @@ export function updateLidarSweep(active) {
   }
 }
 
-export function updateAlertGlow(alert, parts) {
-  // Dispose all previous alert overlays
-  Object.values(alertOverlays).forEach(mesh => {
-    mesh.parent?.remove(mesh)
-    mesh.geometry.dispose()
-    mesh.material.dispose()
-  })
-  alertOverlays = {}
+// Track current alert state to avoid reset/reapply flicker
+let _currentAlertComponent = null
+let _alertedMesh = null
 
+export function updateAlertGlow(alert, parts) {
+  const newComponent = alert?.component || null
+
+  // Only reset if the alert actually changed
+  if (newComponent === _currentAlertComponent) return
+
+  // Reset previous alert
+  if (_alertedMesh) {
+    _alertedMesh.traverse(child => {
+      if (child.material?.uniforms?.uAlertBlend) {
+        child.material.uniforms.uAlertBlend.value = 0
+      }
+    })
+    _alertedMesh = null
+  }
+
+  _currentAlertComponent = newComponent
   if (!alert) return
 
   const targetMesh = resolveComponentMesh(alert.component, parts)
   if (!targetMesh) return
 
-  const overlayMat = new THREE.MeshBasicMaterial({
-    color: 0xff2244,
-    transparent: true,
-    opacity: 0.65,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    side: THREE.DoubleSide,
+  // Tint the mesh red via uAlertBlend
+  targetMesh.traverse(child => {
+    if (child.material?.uniforms?.uAlertBlend) {
+      child.material.uniforms.uAlertBlend.value = 1.0
+      child.material.uniforms.uAlertColor.value.set(0xff2244)
+    }
   })
-  const overlay = new THREE.Mesh(targetMesh.geometry, overlayMat)
-  // Match transform by parenting to the same parent, mirroring position
-  targetMesh.parent.add(overlay)
-  overlay.position.copy(targetMesh.position)
-  overlay.rotation.copy(targetMesh.rotation)
-  // Slightly larger to avoid z-fighting
-  overlay.scale.copy(targetMesh.scale).multiplyScalar(1.03)
-
-  alertOverlays[alert.component] = overlay
+  _alertedMesh = targetMesh
 }
 
 // ── Per-frame tick ────────────────────────────────────────────────────────────
@@ -264,10 +243,15 @@ export function tickEffects(delta) {
     _parts.lidarDome.material.opacity = 0.25
   }
 
-  // Pulse alert overlay opacity
-  Object.values(alertOverlays).forEach(mesh => {
-    mesh.material.opacity = 0.45 + Math.sin(elapsedTime * 6.0) * 0.2
-  })
+  // Pulse alert blend on the alerted mesh
+  if (_alertedMesh) {
+    const pulse = 0.7 + Math.sin(elapsedTime * 6.0) * 0.3
+    _alertedMesh.traverse(child => {
+      if (child.material?.uniforms?.uAlertBlend) {
+        child.material.uniforms.uAlertBlend.value = pulse
+      }
+    })
+  }
 
   // Wheel rotation — lerp speed, then spin proportionally
   const WHEEL_ACCEL = 40
@@ -284,30 +268,24 @@ export function tickEffects(delta) {
     }
   }
 
-  // Engine heat overlay — glow from yellow → orange → red at the engine area
-  if (engineHeatOverlay) {
+  // Engine heat — tint the engineHood mesh color from cyan → yellow → orange → red
+  // Uses uColor directly (not uAlertBlend) so it doesn't conflict with the alert system
+  if (_parts.engineHood?.material?.uniforms) {
     const t = engineTempTarget
-    let targetOpacity = 0
     if (t <= 96) {
-      targetOpacity = 0
+      _tempColor.set(0x00ffff)
     } else if (t <= 100) {
       const f = (t - 96) / 4
-      _tempColor.copy(_colorYellow)
-      targetOpacity = f * 0.35
+      _tempColor.set(0x00ffff).lerp(_colorYellow, f)
     } else if (t <= 103) {
       const f = (t - 100) / 3
       _tempColor.copy(_colorYellow).lerp(_colorOrange, f)
-      targetOpacity = 0.35 + f * 0.2
     } else {
       const f = Math.min((t - 103) / 2, 1)
       _tempColor.copy(_colorOrange).lerp(_colorRed, f)
-      targetOpacity = 0.55 + f * 0.15
     }
 
-    engineHeatOverlay.material.color.lerp(_tempColor, 0.08)
-    const opDiff = targetOpacity - engineHeatOverlay.material.opacity
-    engineHeatOverlay.material.opacity += opDiff * 0.05
-    engineHeatOverlay.visible = engineHeatOverlay.material.opacity > 0.01
+    _parts.engineHood.material.uniforms.uColor.value.lerp(_tempColor, 0.05)
   }
 
   // Grid + road scroll — moves the ground to simulate truck driving forward

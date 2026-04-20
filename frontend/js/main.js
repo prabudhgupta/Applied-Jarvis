@@ -130,12 +130,9 @@ buildTruck(scene).then(() => {
       'tire_rear_left',
       'tire_front_right',
       'engine',
-      'chassis',
-      'cab',
-      'lidar',
     ]
     const component = components[Math.floor(Math.random() * components.length)]
-    const severity  = Math.random() > 0.5 ? 'warning' : 'critical'
+    const severity  = 'critical'
     apiPost('/api/alert', { component, severity })
   })
 

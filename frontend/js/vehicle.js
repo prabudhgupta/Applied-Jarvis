@@ -55,9 +55,10 @@ export function createHolographicMaterial(color = 0x00ffff) {
         float scanline = smoothstep(0.0, 0.4, scan) * 0.18 + 0.82;
 
         vec3 baseColor = mix(uColor, uAlertColor, uAlertBlend);
-        vec3 color = baseColor * (uEmissive + fresnel * 0.9) * scanline;
+        float emBoost = uAlertBlend * 0.5;
+        vec3 color = baseColor * (uEmissive + emBoost + fresnel * 0.9) * scanline;
 
-        float alpha = uOpacity * (0.25 + fresnel * 0.75) * scanline;
+        float alpha = (uOpacity + emBoost) * (0.35 + fresnel * 0.65) * scanline;
         alpha = clamp(alpha, 0.0, 1.0);
 
         gl_FragColor = vec4(color, alpha);
