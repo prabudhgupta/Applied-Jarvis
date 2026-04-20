@@ -22,6 +22,7 @@ let recognition = null
 let _audioQueue = []
 let _isPlaying = false
 let _isSpeaking = false  // true while TTS is playing — pause recognition
+let _userHasInteracted = false // gate audio+mic behind first user gesture
 
 const COMMANDS = [
   { phrases: ['engine simulation', 'engine failure', 'start engine', 'simulate engine'],
@@ -93,7 +94,13 @@ async function _playNext() {
       const audio = new Audio(url)
       audio.onended = () => { URL.revokeObjectURL(url); _playNext() }
       audio.onerror = () => { URL.revokeObjectURL(url); _fallbackSpeak(text); _playNext() }
-      audio.play()
+      try {
+        await audio.play()
+      } catch (e) {
+        console.warn('[voice] Audio play blocked — waiting for user interaction')
+        URL.revokeObjectURL(url)
+        _fallbackSpeak(text)
+      }
       return
     }
   } catch (e) { /* fall through to browser TTS */ }
@@ -201,11 +208,22 @@ export function initVoice(onCommand, statusElement) {
 
   recognition.onerror = (event) => {
     if (event.error === 'not-allowed') {
-      console.warn('[voice] Microphone permission denied. Click anywhere on the page and reload.')
+      console.warn('[voice] Microphone permission denied — will retry on next user interaction')
+      _userHasInteracted = false
       if (_statusEl) {
-        _statusEl.textContent = 'VOICE: MIC DENIED'
+        _statusEl.textContent = 'VOICE: CLICK TO ENABLE'
         _statusEl.className = 'voice-status voice-sleeping'
       }
+      // Re-attach gesture listeners so clicking retries mic access
+      const retry = () => {
+        if (_userHasInteracted) return
+        _userHasInteracted = true
+        try { recognition.start() } catch (e) { /* ok */ }
+        document.removeEventListener('click', retry)
+        document.removeEventListener('touchstart', retry)
+      }
+      document.addEventListener('click', retry)
+      document.addEventListener('touchstart', retry)
     } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
       console.warn('[voice] Error:', event.error)
     }
@@ -222,11 +240,39 @@ export function initVoice(onCommand, statusElement) {
   }
 
   setStatus('sleeping')
-  console.log('[voice] Initialised — starting recognition…')
+
+  // Browsers require a user gesture before allowing mic access and audio playback.
+  // Start recognition immediately if possible, but also set up a one-time click
+  // handler as a fallback for production environments that block without interaction.
+  function _startAfterGesture() {
+    if (_userHasInteracted) return
+    _userHasInteracted = true
+    console.log('[voice] User interaction detected — enabling voice')
+    try {
+      recognition.start()
+      console.log('[voice] Recognition started. Say "Jarvis wake up".')
+    } catch (e) {
+      console.warn('[voice] Could not start recognition:', e.message)
+    }
+    document.removeEventListener('click', _startAfterGesture)
+    document.removeEventListener('touchstart', _startAfterGesture)
+    document.removeEventListener('keydown', _startAfterGesture)
+  }
+
+  // Try starting immediately (works in localhost / previously-granted permission)
+  console.log('[voice] Initialised — attempting recognition start…')
   try {
     recognition.start()
+    _userHasInteracted = true
     console.log('[voice] Recognition started. Say "Jarvis wake up".')
   } catch (e) {
-    console.warn('[voice] Could not start recognition:', e.message)
+    console.log('[voice] Immediate start failed — waiting for user interaction')
+    if (_statusEl) {
+      _statusEl.textContent = 'VOICE: CLICK TO ENABLE'
+      _statusEl.className = 'voice-status voice-sleeping'
+    }
+    document.addEventListener('click', _startAfterGesture, { once: false })
+    document.addEventListener('touchstart', _startAfterGesture, { once: false })
+    document.addEventListener('keydown', _startAfterGesture, { once: false })
   }
 }
