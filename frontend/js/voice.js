@@ -47,6 +47,8 @@ const COMMANDS = [
     action: 'cam_side', response: 'Switching to side profile.' },
   { phrases: ['operator view', 'operator', 'cab view'],
     action: 'cam_operator', response: 'Switching to operator cab view.' },
+  { phrases: ['access view', 'ladder view', 'front access', 'front view'],
+    action: 'cam_access', response: 'Switching to front access view.' },
   { phrases: ['status', 'status report', 'report', 'how are things'],
     action: 'status', response: null },
   { phrases: ['go to sleep', 'sleep', 'stand by', 'goodbye', 'jarvis stand by', 'jarvis sleep'],

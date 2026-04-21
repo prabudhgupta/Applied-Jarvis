@@ -9,9 +9,11 @@ import { getGrid, getRoadGroup } from './scene.js'
 let _scene = null
 let _parts = null
 
-// Bed animation
-let bedTargetAngle  = 0
-let bedCurrentAngle = 0
+// Bed animation — incline when lowered matching real truck bed slope
+const BED_LOWERED_ANGLE = 0.015  // slight clearance so the bed does not sit on the rear tires
+const BED_RAISED_ANGLE = Math.PI * 0.085
+let bedTargetAngle  = BED_LOWERED_ANGLE
+let bedCurrentAngle = BED_LOWERED_ANGLE
 
 
 // LIDAR sweep
@@ -118,7 +120,7 @@ export function initEffects(scene, parts) {
 // ── State-change setters (called from WebSocket handler) ─────────────────────
 
 export function updateBedAnimation(bedPosition) {
-  bedTargetAngle = bedPosition === 'raised' ? Math.PI * 0.15 : 0
+  bedTargetAngle = bedPosition === 'raised' ? BED_RAISED_ANGLE : BED_LOWERED_ANGLE
 }
 
 
@@ -141,12 +143,17 @@ export function updateTirePressure(tirePsi) {
     let color
     if (psi <= CRIT) color = new THREE.Color(0xff2244)
     else if (psi <= WARN) color = new THREE.Color(0xffb300)
-    else color = new THREE.Color(0x00ffff)
+    else color = new THREE.Color(_parts.holographicEnabled ? 0x00ffff : 0x74786f)
     wheel.traverse(child => {
+      if (child.userData?.isWheelDetail) return
       if (child.material?.uniforms?.uColor) {
         child.material.uniforms.uColor.value.copy(color)
       } else if (child.material?.color) {
         child.material.color.copy(color)
+        // Add emissive glow for visibility on dark materials
+        if (child.material.emissive) {
+          child.material.emissive.copy(color).multiplyScalar(psi <= CRIT ? 0.4 : psi <= WARN ? 0.2 : 0)
+        }
       }
     })
   }
@@ -177,6 +184,8 @@ export function updateAlertGlow(alert, parts) {
     _alertedMesh.traverse(child => {
       if (child.material?.uniforms?.uAlertBlend) {
         child.material.uniforms.uAlertBlend.value = 0
+      } else if (child.material?.emissive) {
+        child.material.emissive.set(0x000000)
       }
     })
     _alertedMesh = null
@@ -188,11 +197,13 @@ export function updateAlertGlow(alert, parts) {
   const targetMesh = resolveComponentMesh(alert.component, parts)
   if (!targetMesh) return
 
-  // Tint the mesh red via uAlertBlend
+  // Tint the mesh red via uAlertBlend (holographic) or emissive (standard)
   targetMesh.traverse(child => {
     if (child.material?.uniforms?.uAlertBlend) {
       child.material.uniforms.uAlertBlend.value = 1.0
       child.material.uniforms.uAlertColor.value.set(0xff2244)
+    } else if (child.material?.emissive) {
+      child.material.emissive.set(0xff2244)
     }
   })
   _alertedMesh = targetMesh
@@ -223,8 +234,18 @@ export function tickEffects(delta) {
   const bedDiff = bedTargetAngle - bedCurrentAngle
   if (Math.abs(bedDiff) > 0.0005) {
     bedCurrentAngle += Math.sign(bedDiff) * Math.min(Math.abs(bedDiff), BED_SPEED * delta)
-    const sign = _parts.bedRotationSign ?? 1
-    _parts.bedGroup.rotation.z = bedCurrentAngle * sign
+  }
+  const sign = _parts.bedRotationSign ?? 1
+  _parts.bedGroup.rotation.z = bedCurrentAngle * sign
+
+  if (_parts.hydraulicGroup) {
+    const progress = THREE.MathUtils.clamp(
+      (bedCurrentAngle - BED_LOWERED_ANGLE) / (BED_RAISED_ANGLE - BED_LOWERED_ANGLE),
+      0,
+      1
+    )
+    _parts.hydraulicGroup.visible = progress > 0.04
+    _parts.hydraulicGroup.scale.y = THREE.MathUtils.lerp(0.25, 1, progress)
   }
 
   // LIDAR sweep rotation
@@ -249,6 +270,8 @@ export function tickEffects(delta) {
     _alertedMesh.traverse(child => {
       if (child.material?.uniforms?.uAlertBlend) {
         child.material.uniforms.uAlertBlend.value = pulse
+      } else if (child.material?.emissive) {
+        child.material.emissive.set(0xff2244).multiplyScalar(pulse * 0.5)
       }
     })
   }
@@ -263,20 +286,20 @@ export function tickEffects(delta) {
     const wheelRadius = _parts.wheelRadius || 1.4
     const omega = ((wheelCurrentSpeed / 3.6) / wheelRadius) * 3
     const rotIncrement = omega * delta
+    const spinAxis = _parts.wheelSpinAxis || 'y'
     for (const w of Object.values(_parts.wheels)) {
-      if (w) w.rotation.y += rotIncrement
+      if (w) w.rotation[spinAxis] += rotIncrement
     }
   }
 
-  // Engine heat — tint the engineHood mesh color from cyan → yellow → orange → red
-  // Uses uColor directly (not uAlertBlend) so it doesn't conflict with the alert system
-  if (_parts.engineHood?.material?.uniforms) {
+  // Engine heat — tint the engineHood from normal → yellow → orange → red
+  if (_parts.engineHood) {
     const t = engineTempTarget
     if (t <= 96) {
-      _tempColor.set(0x00ffff)
+      _tempColor.set(0x000000) // no heat tint
     } else if (t <= 100) {
       const f = (t - 96) / 4
-      _tempColor.set(0x00ffff).lerp(_colorYellow, f)
+      _tempColor.set(0x000000).lerp(_colorYellow, f)
     } else if (t <= 103) {
       const f = (t - 100) / 3
       _tempColor.copy(_colorYellow).lerp(_colorOrange, f)
@@ -285,7 +308,18 @@ export function tickEffects(delta) {
       _tempColor.copy(_colorOrange).lerp(_colorRed, f)
     }
 
-    _parts.engineHood.material.uniforms.uColor.value.lerp(_tempColor, 0.05)
+    // Holographic path: tint uColor
+    if (_parts.engineHood.material?.uniforms?.uColor) {
+      const holoTarget = t <= 96 ? new THREE.Color(0x00ffff) : _tempColor
+      _parts.engineHood.material.uniforms.uColor.value.lerp(holoTarget, 0.05)
+    } else {
+      // Standard material path: use emissive for heat glow
+      _parts.engineHood.traverse(child => {
+        if (child.material?.emissive) {
+          child.material.emissive.lerp(_tempColor, 0.05)
+        }
+      })
+    }
   }
 
   // Grid + road scroll — moves the ground to simulate truck driving forward

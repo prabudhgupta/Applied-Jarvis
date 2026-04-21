@@ -1,11 +1,202 @@
 import * as THREE from 'three'
 
-// ── Holographic ShaderMaterial ────────────────────────────────────────────────
-// Custom shader: Fresnel edge glow + world-space horizontal scanlines +
-// additive blending.  uAlertBlend (0→1) lerps the color toward red for alerts.
-// AdditiveBlending + depthWrite:false is the correct combo for holographic
-// translucent meshes — overlapping geometry brightens rather than obscures.
+// ── Module state ──────────────────────────────────────────────────────────────
+let _parts = null
+export function getTruckParts() { return _parts }
 
+export function setHolographicMode(enabled) {
+  if (!_parts?.truckGroup) return
+
+  const holographicMaterials = []
+  _parts.truckGroup.traverse(child => {
+    if (!child.isMesh) return
+    if (!child.userData.originalMaterial) {
+      child.userData.originalMaterial = child.material
+    }
+
+    if (enabled) {
+      if (!child.userData.holographicMaterial) {
+        const color = child.userData.isWheelDetail ? 0x66ffff : 0x00ffff
+        child.userData.holographicMaterial = createHolographicMaterial(color)
+        child.userData.holographicMaterial.uniforms.uOpacity.value = 0.24
+        child.userData.holographicMaterial.uniforms.uEmissive.value = 0.07
+      }
+      child.material = child.userData.holographicMaterial
+      holographicMaterials.push(child.material)
+    } else {
+      child.material = child.userData.originalMaterial
+    }
+  })
+
+  _parts.holographicEnabled = enabled
+  _parts.allMaterials = enabled ? holographicMaterials : []
+}
+
+// ── Assembly Table ────────────────────────────────────────────────────────────
+// Liebherr T284 mining truck: 48 STL parts from 3D-print CAD export.
+// Only the structurally significant parts are loaded and assembled here.
+// Positions derived from real Liebherr T284 dimensions at 1:58.8 scale
+// (model wheel diameter 61.2mm = real 3600mm tire).
+//
+// Coordinate system (Three.js Y-up, truck faces +X):
+//   X = forward/back (front of truck = +X)
+//   Y = up
+//   Z = left/right (left = +Z)
+//
+// Non-wheel parts need R_x(-90°) to convert STL Z-up → Three.js Y-up.
+// Wheels are already correct without rotation (face in XY, axle along Z).
+
+const STL_DIR = './models/liebherr/'
+
+const ASSEMBLY = {
+  // ── Wheels (6) ─────────────────────────────────────────────────────────────
+  'obj_12_Component18.stl': { type: 'wheel', key: 'fl',  pos: [ 95, 30.6,  46.1 ] },
+  'obj_13_Component18.stl': { type: 'wheel', key: 'fr',  pos: [ 95, 30.6, -46.1 ] },
+  'obj_10_Component19.stl': { type: 'wheel', key: 'rlo', pos: [-12, 30.6,  58.65] },
+  'obj_11_Component19.stl': { type: 'wheel', key: 'rli', pos: [-12, 30.6,  29.75] },
+  'obj_14_Component19.stl': { type: 'wheel', key: 'rro', pos: [-12, 30.6, -29.75] },
+  'obj_15_Component19.stl': { type: 'wheel', key: 'rri', pos: [-12, 30.6, -58.65] },
+
+  // ── Dump bed (moved forward so hinge aligns with rear chassis) ──────────────
+  'obj_1_to.stl_A.stl': { type: 'bed', pos: [5, 100, 0] },
+
+  // ── Cab ────────────────────────────────────────────────────────────────────
+  'obj_3_Body9.stl': { type: 'cab', pos: [95, 90, 0] },
+
+  // ── Chassis / frame rails ──────────────────────────────────────────────────
+  'obj_8_Component2.stl_A.stl':   { type: 'chassis', pos: [20, 45, 0] },
+  'obj_9_Component2.stl_B_A.stl': { type: 'chassis', pos: [-40, 40, 0] },
+  'obj_16_Component2.stl_B_B.stl':{ type: 'chassis', pos: [60, 40, 0] },
+
+  // ── Deck plate (bed support surface) ───────────────────────────────────────
+  'obj_2_to.stl_B.stl': { type: 'body', pos: [10, 56, 0] },
+
+  // ── Engine hood ────────────────────────────────────────────────────────────
+  'obj_4_Body5.stl_A.stl': { type: 'engine', pos: [118, 80, 0] },
+
+  // ── Exhaust stacks (lowered, closer to cab) ───────────────────────────────
+  'obj_45_Component33.stl': { type: 'body', pos: [78, 68, 38] },
+  'obj_46_Component32.stl': { type: 'body', pos: [78, 68, -38] },
+
+  // ── Front face (grille + panel below engine) ────────────────────────────────
+  'obj_5_Body5.stl_B.stl': { type: 'body', pos: [137, 80, 0] },
+  'obj_18_Component3.stl': { type: 'body', pos: [133, 63, 0] },
+
+  // ── Gap between cab and bed (equipment housing / body structure) ────────────
+  'obj_6_Body6.stl':       { type: 'body', pos: [68, 75, 0] },
+  'obj_7_Body4.stl':       { type: 'body', pos: [58, 78, 0] },
+  'obj_20_Component4.stl_B.stl': { type: 'chassis', pos: [72, 65, 0] },
+
+  // ── Structural supports (centered) ─────────────────────────────────────────
+  'obj_19_Component11.stl':      { type: 'chassis', pos: [40, 48, 0] },
+  'obj_21_Component4.stl_A.stl': { type: 'chassis', pos: [-30, 50, 0] },
+
+  // ── Suspension / hydraulics (between dual wheels, Z=±44) ───────────────────
+  'obj_27_Component25.stl':  { type: 'chassis', pos: [-45, 35, 44] },
+  'obj_28_Component28.stl':  { type: 'chassis', pos: [-45, 35, -44] },
+  'obj_43_Component10.stl':  { type: 'chassis', pos: [-18, 38, 44] },
+  'obj_44_Component27.stl':  { type: 'chassis', pos: [-18, 38, -44] },
+  'obj_30_Component26.stl':  { type: 'chassis', pos: [15, 48, 0] },
+
+  // ── Front fender / platform ────────────────────────────────────────────────
+  'obj_29_Component29.stl': { type: 'chassis', pos: [90, 64, 0] },
+
+  // ── Deck surface plates ────────────────────────────────────────────────────
+  'obj_17_Component15.stl':  { type: 'chassis', pos: [0, 56, 0] },
+  'obj_24_Component13.stl':  { type: 'chassis', pos: [45, 56, 0] },
+  'obj_25_Component132.stl': { type: 'chassis', pos: [-25, 56, 15] },
+  'obj_26_Component133.stl': { type: 'chassis', pos: [-25, 56, -15] },
+
+  // ── Side rails ─────────────────────────────────────────────────────────────
+  'obj_22_Component92.stl': { type: 'chassis', pos: [35, 56, 55] },
+  'obj_23_Component92.stl': { type: 'chassis', pos: [35, 56, -55] },
+
+  // ── Guardrails / handrails ─────────────────────────────────────────────────
+  'obj_33_Component31.stl': { type: 'body', pos: [78, 95, 55] },
+  'obj_34_Component31.stl': { type: 'body', pos: [78, 95, -55] },
+
+  // ── Small structural details (centered, no wheel clipping) ─────────────────
+  'obj_41_Component35.stl': { type: 'chassis', pos: [48, 50, 10] },
+  'obj_42_Component34.stl': { type: 'chassis', pos: [48, 50, -10] },
+  'obj_47_Component30.stl': { type: 'chassis', pos: [82, 58, 15] },
+  'obj_48_Component30.stl': { type: 'chassis', pos: [82, 58, -15] },
+
+  // The remaining tiny round/axle STL pieces render as diagonal pins in this
+  // scene, so hubcaps are recreated procedurally for cleaner visual fidelity.
+}
+
+// ── Bed hinge point (rear-bottom of dump bed) ────────────────────────────────
+// bed center X = 5, half-length = 203.1/2 = 101.55 → rear = -96.55
+// bed center Y = 100, half-height = 88/2 = 44 → bottom = 56
+const BED_HINGE_X = -96.55
+const BED_HINGE_Y = 66
+const BED_RESTING_CLEARANCE_Y = 4
+
+// Rear wheel group centers (midpoint between inner/outer duals)
+const RL_CENTER_Z = (58.65 + 29.75) / 2   // 44.2
+const RR_CENTER_Z = -(58.65 + 29.75) / 2  // -44.2
+
+// ── Materials ─────────────────────────────────────────────────────────────────
+function makeBodyMat() {
+  return new THREE.MeshStandardMaterial({
+    color: 0xffc247, roughness: 0.46, metalness: 0.08,
+    emissive: 0x5a3200,
+    emissiveIntensity: 0.2,
+    vertexColors: true,
+  })
+}
+function makeBedMat() {
+  return new THREE.MeshStandardMaterial({
+    color: 0xf0b13a, roughness: 0.52, metalness: 0.07,
+    emissive: 0x4a2a00,
+    emissiveIntensity: 0.18,
+    vertexColors: true,
+  })
+}
+function makeWheelMat() {
+  return new THREE.MeshStandardMaterial({
+    color: 0x74786f, roughness: 0.78, metalness: 0.05,
+    emissive: 0x20231f,
+    emissiveIntensity: 0.38,
+  })
+}
+function makeWheelDetailMat() {
+  return new THREE.MeshStandardMaterial({
+    color: 0xf0b43a, roughness: 0.5, metalness: 0.16,
+    emissive: 0x5b3500,
+    emissiveIntensity: 0.26,
+  })
+}
+function makeChassisMat() {
+  return new THREE.MeshStandardMaterial({
+    color: 0x181a1d, roughness: 0.62, metalness: 0.22,
+  })
+}
+function makeAccessMat() {
+  return new THREE.MeshStandardMaterial({
+    color: 0x59636d, roughness: 0.46, metalness: 0.35,
+    emissive: 0x10161a,
+    emissiveIntensity: 0.34,
+  })
+}
+
+function getMaterial(type) {
+  switch (type) {
+    case 'wheel':   return makeWheelMat()
+    case 'bed':     return makeBedMat()
+    case 'chassis': return makeChassisMat()
+    case 'cab':     return makeBodyMat()
+    case 'body':    return makeBodyMat()
+    case 'engine': {
+      const m = makeBodyMat()
+      m.color.set(0xffcb4f)
+      return m
+    }
+    default: return makeChassisMat()
+  }
+}
+
+// ── Holographic ShaderMaterial (procedural fallback) ─────────────────────────
 export function createHolographicMaterial(color = 0x00ffff) {
   return new THREE.ShaderMaterial({
     uniforms: {
@@ -23,7 +214,6 @@ export function createHolographicMaterial(color = 0x00ffff) {
       varying vec3 vNormal;
       varying vec3 vViewDir;
       varying vec3 vWorldPos;
-
       void main() {
         vec4 worldPos = modelMatrix * vec4(position, 1.0);
         vWorldPos = worldPos.xyz;
@@ -42,25 +232,19 @@ export function createHolographicMaterial(color = 0x00ffff) {
       uniform float uEmissive;
       uniform vec3  uAlertColor;
       uniform float uAlertBlend;
-
       varying vec3 vNormal;
       varying vec3 vViewDir;
       varying vec3 vWorldPos;
-
       void main() {
         float NdotV   = clamp(dot(vNormal, vViewDir), 0.0, 1.0);
         float fresnel = pow(1.0 - NdotV, uFresnelPow);
-
         float scan     = sin(vWorldPos.y * uScanDensity - uTime * uScanSpeed * 10.0);
         float scanline = smoothstep(0.0, 0.4, scan) * 0.18 + 0.82;
-
         vec3 baseColor = mix(uColor, uAlertColor, uAlertBlend);
         float emBoost = uAlertBlend * 0.5;
         vec3 color = baseColor * (uEmissive + emBoost + fresnel * 0.9) * scanline;
-
         float alpha = (uOpacity + emBoost) * (0.35 + fresnel * 0.65) * scanline;
         alpha = clamp(alpha, 0.0, 1.0);
-
         gl_FragColor = vec4(color, alpha);
       }
     `,
@@ -71,429 +255,435 @@ export function createHolographicMaterial(color = 0x00ffff) {
   })
 }
 
-// ── Module state ──────────────────────────────────────────────────────────────
-let _parts = null
-export function getTruckParts() { return _parts }
-
-function makeMesh(geometry, material) {
-  const mesh = new THREE.Mesh(geometry, material)
-  mesh.castShadow = false
-  return mesh
-}
-
-// ── Public entry point ────────────────────────────────────────────────────────
+// ── Public entry point ───────────────────────────────────────────────────────
 export async function buildTruck(scene) {
   try {
-    return await buildFromGLTF(scene)
+    return await buildAssembledSTL(scene)
   } catch (err) {
-    console.warn('[vehicle] GLTF load failed, using procedural truck:', err?.message || err)
+    console.warn('[vehicle] STL assembly failed, falling back to procedural:', err?.message || err)
     return buildProceduralTruck(scene)
   }
 }
 
-// ── GLTF ingestion pipeline ───────────────────────────────────────────────────
-//
-// Two-stage pipeline that mirrors how a production perception/CAD pipeline
-// ingests vehicle geometry:
-//
-//   STAGE 1 — STRUCTURED PATH
-//     Walk the glTF scene graph looking for named nodes (Bed, Cab, Wheel_FL…).
-//     This is how OEM exports arrive — Komatsu / Caterpillar CAD toolchains
-//     emit structured glTFs with named sub-parts. O(1), deterministic.
-//
-//   STAGE 2 — FEATURE-BASED FALLBACK
-//     When the input is a merged mesh (common for free dev-time models),
-//     derive sub-parts from geometric features. All thresholds are bbox-
-//     relative, so the same pipeline works across trucks of different sizes
-//     and proportions. No hardcoded world coordinates below this point.
-//
-// Assumptions (for Stage 2):
-//   · Truck's longest axis is X (length). Shortest is Y (height).
-//   · Bed is the tallest feature in one half of X. We detect which half and
-//     rotate so it ends up at +X canonically.
-//   · Wheels are roughly at the truck's four corners in XZ, at low Y.
+// ── Assembled STL truck ──────────────────────────────────────────────────────
+async function buildAssembledSTL(scene) {
+  const { STLLoader } = await import('three/examples/jsm/loaders/STLLoader.js')
+  const loader = new STLLoader()
+  const rotZ2Y = new THREE.Matrix4().makeRotationX(-Math.PI / 2)
 
-async function buildFromGLTF(scene) {
-  const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js')
-  const loader = new GLTFLoader()
-  const gltf = await new Promise((resolve, reject) => {
-    loader.load('./models/truck.glb', resolve, undefined, reject)
-  })
+  const entries = Object.entries(ASSEMBLY)
+  console.log(`[vehicle] Loading ${entries.length} STL parts for assembly...`)
 
-  // Stage 1 ────────────────────────────────────────────────────────────────
-  const structured = extractStructuredParts(gltf.scene)
-  if (structured) {
-    console.log('[vehicle] GLTF has structured scene graph — using named nodes')
-    return assembleFromStructured(scene, structured)
-  }
+  // Load all parts in parallel
+  const loaded = await Promise.all(entries.map(([file, config]) =>
+    new Promise((resolve, reject) => {
+      loader.load(STL_DIR + file, geo => {
+        geo.computeVertexNormals()
 
-  // Stage 2 ────────────────────────────────────────────────────────────────
-  console.log('[vehicle] GLTF is a merged mesh — using feature-based segmentation')
-  const geom = extractMergedGeometry(gltf.scene)
-  normalizeToCanonical(geom, { targetLen: 10 })
-  return assembleFromFeatures(scene, geom)
-}
+        // Convert Z-up → Y-up for non-wheel parts.
+        // Wheels are already correct: face in XY plane, axle along Z.
+        if (config.type !== 'wheel') {
+          geo.applyMatrix4(rotZ2Y)
+        }
 
-// ── Stage 1: structured extraction ────────────────────────────────────────────
-// Looks for named nodes matching common OEM conventions. Returns null if the
-// scene graph doesn't expose sub-parts (triggers the feature-based fallback).
-function extractStructuredParts(gltfScene) {
-  const namePatterns = {
-    bed:      [/bed/i, /dumpbox/i, /hopper/i, /tray/i],
-    cab:      [/cab/i, /cabin/i],
-    wheel_fl: [/wheel.*fl$/i, /wheel.*front.?left/i, /fl.*wheel/i],
-    wheel_fr: [/wheel.*fr$/i, /wheel.*front.?right/i, /fr.*wheel/i],
-    wheel_rl: [/wheel.*rl$/i, /wheel.*rear.?left/i, /rl.*wheel/i],
-    wheel_rr: [/wheel.*rr$/i, /wheel.*rear.?right/i, /rr.*wheel/i],
-  }
-  const found = {}
-  gltfScene.traverse(node => {
-    if (!node.isMesh) return
-    for (const [key, patterns] of Object.entries(namePatterns)) {
-      if (!found[key] && patterns.some(p => p.test(node.name))) found[key] = node
+        // Center geometry at its own origin (not at the print-bed position)
+        geo.computeBoundingBox()
+        const c = new THREE.Vector3()
+        geo.boundingBox.getCenter(c)
+        geo.translate(-c.x, -c.y, -c.z)
+
+        // Flip bed 180° around Y — the tall protective front wall (serrated edge)
+        // must face the cab/engine, not the rear of the truck.
+        if (config.type === 'bed') {
+          geo.applyMatrix4(new THREE.Matrix4().makeRotationY(Math.PI))
+        }
+        if (['bed', 'body', 'cab', 'engine'].includes(config.type)) {
+          addVerticalColorGradient(geo, config.type === 'bed' ? 0xffca4d : 0xffd25c, 0xb77a24)
+        }
+
+        resolve({ file, geo, config })
+      }, undefined, err => reject(new Error(`Failed to load ${file}: ${err?.message || err}`)))
+    })
+  ))
+
+  console.log(`[vehicle] All ${loaded.length} parts loaded, assembling...`)
+
+  // ── Create scene hierarchy ──────────────────────────────────────────────────
+  const truckGroup = new THREE.Group()
+  const bodyGroup  = new THREE.Group()
+  const bedGroup   = new THREE.Group()
+
+  // Wheel groups: FL/FR are single wheels, RL/RR are dual groups
+  const wheelFL = new THREE.Group()
+  const wheelFR = new THREE.Group()
+  const wheelRL = new THREE.Group()
+  const wheelRR = new THREE.Group()
+  wheelFL.position.set(95, 30.6, 46.1)
+  wheelFR.position.set(95, 30.6, -46.1)
+  wheelRL.position.set(-12, 30.6, RL_CENTER_Z)
+  wheelRR.position.set(-12, 30.6, RR_CENTER_Z)
+
+  // Bed group pivot at hinge (rear-bottom of bed), with a small resting lift so
+  // wheels/hydraulics do not poke through the lowered bed from top-down views.
+  bedGroup.position.set(BED_HINGE_X, BED_HINGE_Y + BED_RESTING_CLEARANCE_Y, 0)
+
+  let chassisMesh = null
+  let cabMesh     = null
+  let engineMesh  = null
+
+  for (const { file, geo, config } of loaded) {
+    const mat  = getMaterial(config.type)
+    const mesh = new THREE.Mesh(geo, mat)
+    mesh.castShadow   = true
+    mesh.receiveShadow = true
+
+    const [px, py, pz] = config.pos
+
+    switch (config.type) {
+      case 'wheel': {
+        // Place wheel mesh inside its group (local offset from group center)
+        switch (config.key) {
+          case 'fl':  wheelFL.add(mesh); break
+          case 'fr':  wheelFR.add(mesh); break
+          case 'rlo': mesh.position.set(0, 0, 58.65 - RL_CENTER_Z);  wheelRL.add(mesh); break
+          case 'rli': mesh.position.set(0, 0, 29.75 - RL_CENTER_Z);  wheelRL.add(mesh); break
+          case 'rro': mesh.position.set(0, 0, -29.75 - RR_CENTER_Z); wheelRR.add(mesh); break
+          case 'rri': mesh.position.set(0, 0, -58.65 - RR_CENTER_Z); wheelRR.add(mesh); break
+        }
+        break
+      }
+      case 'bed':
+        // Position relative to bed hinge
+        mesh.position.set(px - BED_HINGE_X, py - BED_HINGE_Y, pz)
+        bedGroup.add(mesh)
+        break
+      case 'cab':
+        mesh.position.set(px, py, pz)
+        bodyGroup.add(mesh)
+        cabMesh = mesh
+        break
+      case 'engine':
+        mesh.position.set(px, py, pz)
+        bodyGroup.add(mesh)
+        engineMesh = mesh
+        break
+      case 'chassis':
+        mesh.position.set(px, py, pz)
+        bodyGroup.add(mesh)
+        if (!chassisMesh) chassisMesh = mesh
+        break
+      default:
+        mesh.position.set(px, py, pz)
+        bodyGroup.add(mesh)
     }
-  })
-  const wheelCount = ['wheel_fl','wheel_fr','wheel_rl','wheel_rr']
-    .filter(k => found[k]).length
-  return (found.bed && wheelCount >= 2) ? found : null
-}
-
-function assembleFromStructured(/* scene, parts */) {
-  // Extension point for OEM structured glTFs. Our dev model is merged, so
-  // this path isn't reachable today. When integrating a structured export,
-  // implement here: clone node geometries, apply holographic material,
-  // hinge the bed at its rear-bottom edge, populate _parts.wheels, etc.
-  throw new Error('structured-path assembly not yet implemented — using feature fallback')
-}
-
-// ── Geometry helpers ──────────────────────────────────────────────────────────
-
-function extractMergedGeometry(gltfScene) {
-  let sourceMesh = null
-  gltfScene.traverse(c => { if (c.isMesh && !sourceMesh) sourceMesh = c })
-  if (!sourceMesh) throw new Error('No mesh found in GLTF')
-  sourceMesh.updateMatrixWorld(true)
-  const geom = sourceMesh.geometry.clone()
-  geom.applyMatrix4(sourceMesh.matrixWorld)
-  return geom
-}
-
-// Normalize the geometry into a canonical frame:
-//   1. Scale so the longest axis is `targetLen`
-//   2. Center on X/Z, sit on y=0
-//   3. Detect orientation (which X-half the bed is in) and rotate 180° if
-//      needed so the bed ends up at +X by convention
-function normalizeToCanonical(geom, { targetLen }) {
-  geom.computeBoundingBox()
-  const size = new THREE.Vector3()
-  geom.boundingBox.getSize(size)
-  const scale = targetLen / Math.max(size.x, size.y, size.z)
-  geom.applyMatrix4(new THREE.Matrix4().makeScale(scale, scale, scale))
-
-  centerGeometryOnXZGround(geom)
-  alignLengthToX(geom)
-  alignBedToPositiveX(geom)
-}
-
-function centerGeometryOnXZGround(geom) {
-  geom.computeBoundingBox()
-  const bb = geom.boundingBox
-  geom.translate(
-    -(bb.min.x + bb.max.x) / 2,
-    -bb.min.y,
-    -(bb.min.z + bb.max.z) / 2
-  )
-  geom.computeBoundingBox()
-}
-
-// Ensure the truck's longest horizontal axis is X (our length convention).
-// If Z > X, rotate 90° around Y so length maps to X and width maps to Z.
-function alignLengthToX(geom) {
-  geom.computeBoundingBox()
-  const size = new THREE.Vector3()
-  geom.boundingBox.getSize(size)
-  if (size.z > size.x) {
-    geom.applyMatrix4(new THREE.Matrix4().makeRotationY(Math.PI / 2))
-    centerGeometryOnXZGround(geom)
-  }
-}
-
-// Count upper-half triangle centroids on each side of X=0. The side with more
-// upper triangles is where the tall bed walls live; rotate so it lands at +X.
-function alignBedToPositiveX(geom) {
-  const bb = geom.boundingBox
-  const yMid = bb.min.y + (bb.max.y - bb.min.y) * 0.5
-
-  const pos = geom.getAttribute('position')
-  const index = geom.index
-  const triCount = index ? index.count / 3 : pos.count / 3
-  let negXUpper = 0, posXUpper = 0
-  for (let t = 0; t < triCount; t++) {
-    let i0, i1, i2
-    if (index) {
-      i0 = index.getX(t * 3); i1 = index.getX(t * 3 + 1); i2 = index.getX(t * 3 + 2)
-    } else {
-      i0 = t * 3; i1 = t * 3 + 1; i2 = t * 3 + 2
-    }
-    const cy = (pos.getY(i0) + pos.getY(i1) + pos.getY(i2)) / 3
-    if (cy < yMid) continue
-    const cx = (pos.getX(i0) + pos.getX(i1) + pos.getX(i2)) / 3
-    if (cx < 0) negXUpper++
-    else        posXUpper++
   }
 
-  if (negXUpper > posXUpper) {
-    geom.applyMatrix4(new THREE.Matrix4().makeRotationY(Math.PI))
-    centerGeometryOnXZGround(geom)
-  }
-}
+  const hydraulicGroup = addHydraulicDetails(bodyGroup)
+  addOperatorAccessDetails(bodyGroup)
+  addWheelHubCaps({ wheelFL, wheelFR, wheelRL, wheelRR })
 
-// ── Stage 2: feature detectors ────────────────────────────────────────────────
+  // The reference haul truck reads long and low from the side. Lengthen the
+  // bed forward from its hinge while keeping the chassis/cab proportions stable.
+  bedGroup.scale.x = 1.16
 
-// Split body and bed by triangle-centroid position. The bed is the
-// upper-rear rectangular volume of the normalized bbox; "upper" and "rear"
-// are bbox-relative fractions so the detector scales with truck size.
-function detectBedRegion(geom) {
-  geom.computeBoundingBox()
-  const bb = geom.boundingBox
-  const xT = bb.min.x + (bb.max.x - bb.min.x) * 0.30
-  const yT = bb.min.y + (bb.max.y - bb.min.y) * 0.40
-  const { aGeo, bGeo } = splitGeometryByCentroid(geom, (cx, cy) => cx > xT && cy > yT)
-  return { bedGeo: aGeo, bodyGeo: bGeo }
-}
+  // ── Assemble hierarchy ──────────────────────────────────────────────────────
+  bodyGroup.add(bedGroup)
+  bodyGroup.add(wheelFL, wheelFR, wheelRL, wheelRR)
+  truckGroup.add(bodyGroup)
 
-// Detect wheel positions by clustering low-Y, outer-Z triangle centroids.
-// Rationale: a wheel arch is GEOMETRICALLY defined as low (bottom ~30% of
-// the truck) and lateral (outer ~20%+ of the Z span). Triangles meeting
-// both predicates are grouped into the four XZ-quadrants; each quadrant's
-// centroid is the wheel center. Returns { fl, fr, rl, rr } of {x, z}.
-//
-// Assumes normalized geometry: +X = rear, -X = front, ±Z = sides.
-function detectWheelPositions(geom) {
-  geom.computeBoundingBox()
-  const bb = geom.boundingBox
-  const height = bb.max.y - bb.min.y
-  const depth  = bb.max.z - bb.min.z
-  const yMax     = bb.min.y + height * 0.30
-  const zMagMin  = depth * 0.20
-  const minPts   = 6   // a real arch should have at least this many triangles
-
-  const pos = geom.getAttribute('position')
-  const index = geom.index
-  const triCount = index ? index.count / 3 : pos.count / 3
-
-  const buckets = { fl: [], fr: [], rl: [], rr: [] }
-  for (let t = 0; t < triCount; t++) {
-    let i0, i1, i2
-    if (index) {
-      i0 = index.getX(t * 3); i1 = index.getX(t * 3 + 1); i2 = index.getX(t * 3 + 2)
-    } else {
-      i0 = t * 3; i1 = t * 3 + 1; i2 = t * 3 + 2
-    }
-    const cy = (pos.getY(i0) + pos.getY(i1) + pos.getY(i2)) / 3
-    if (cy > yMax) continue
-    const cx = (pos.getX(i0) + pos.getX(i1) + pos.getX(i2)) / 3
-    const cz = (pos.getZ(i0) + pos.getZ(i1) + pos.getZ(i2)) / 3
-    if (Math.abs(cz) < zMagMin) continue
-    const xSide = cx < 0 ? 'f' : 'r'   // -X = front
-    const zSide = cz > 0 ? 'l' : 'r'   // +Z = left (arbitrary but consistent)
-    buckets[xSide + zSide].push([cx, cz])
-  }
-
-  console.log(`[vehicle] Wheel detection — bbox: x[${bb.min.x.toFixed(1)},${bb.max.x.toFixed(1)}] y[${bb.min.y.toFixed(1)},${bb.max.y.toFixed(1)}] z[${bb.min.z.toFixed(1)},${bb.max.z.toFixed(1)}]`)
-  console.log(`[vehicle] Wheel detection — yMax=${yMax.toFixed(2)}, zMagMin=${zMagMin.toFixed(2)}, triCount=${triCount}`)
-  console.log(`[vehicle] Wheel detection — buckets: fl=${buckets.fl.length} fr=${buckets.fr.length} rl=${buckets.rl.length} rr=${buckets.rr.length}`)
-
-  const out = {}
-  for (const [key, pts] of Object.entries(buckets)) {
-    if (pts.length < minPts) continue
-    const avgX = pts.reduce((s, p) => s + p[0], 0) / pts.length
-    const avgZ = pts.reduce((s, p) => s + p[1], 0) / pts.length
-    out[key] = { x: avgX, z: avgZ }
-  }
-  console.log(`[vehicle] Wheel detection — detected ${Object.keys(out).length} wheels:`, out)
-  return out
-}
-
-// Generic triangle splitter: each triangle goes to aGeo if predicate(cx,cy,cz)
-// is true, otherwise to bGeo. Normals are recomputed on both outputs.
-function splitGeometryByCentroid(geom, predicate) {
-  const src = geom.index ? geom.toNonIndexed() : geom
-  const pos = src.getAttribute('position')
-  const triCount = pos.count / 3
-  const aVerts = []
-  const bVerts = []
-  for (let t = 0; t < triCount; t++) {
-    const i0 = t * 3
-    const x0 = pos.getX(i0),     y0 = pos.getY(i0),     z0 = pos.getZ(i0)
-    const x1 = pos.getX(i0 + 1), y1 = pos.getY(i0 + 1), z1 = pos.getZ(i0 + 1)
-    const x2 = pos.getX(i0 + 2), y2 = pos.getY(i0 + 2), z2 = pos.getZ(i0 + 2)
-    const cx = (x0 + x1 + x2) / 3
-    const cy = (y0 + y1 + y2) / 3
-    const cz = (z0 + z1 + z2) / 3
-    const target = predicate(cx, cy, cz) ? aVerts : bVerts
-    target.push(x0, y0, z0, x1, y1, z1, x2, y2, z2)
-  }
-  const toGeom = verts => {
-    const g = new THREE.BufferGeometry()
-    g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3))
-    g.computeVertexNormals()
-    return g
-  }
-  return { aGeo: toGeom(aVerts), bGeo: toGeom(bVerts) }
-}
-
-// ── Assembly ──────────────────────────────────────────────────────────────────
-
-function assembleFromFeatures(scene, geom) {
-  const bb = geom.boundingBox
-  const truckHeight = bb.max.y - bb.min.y
-  const truckDepth  = bb.max.z - bb.min.z
-
-  const { bodyGeo, bedGeo } = detectBedRegion(geom)
-  const wheelPositions = detectWheelPositions(geom)
-
-  const allMaterials = []
-
-  // Body mesh
-  const bodyMat = createHolographicMaterial(0x00ffff)
-  allMaterials.push(bodyMat)
-  const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat)
-
-  // Bed mesh — hinge at the REAR-bottom edge (tailgate end, far from cab).
-  // Like a real Cat 797: hydraulics push the cab-side of the bed UP, the
-  // rear stays at the hinge. Material slides from high front to low rear.
-  const bedMat = createHolographicMaterial(0x00bbdd)
-  allMaterials.push(bedMat)
-  bedGeo.computeBoundingBox()
-  const bedBB  = bedGeo.boundingBox
-  const hingeX = bedBB.max.x   // rear/tailgate edge (far from cab, +X)
-  const hingeY = bedBB.min.y   // bottom of bed
-  bedGeo.translate(-hingeX, -hingeY, 0)
-  const bedMesh = new THREE.Mesh(bedGeo, bedMat)
-  bedMesh.position.set(hingeX, hingeY, 0)
-  console.log(`[vehicle] Bed: hinge at rear x=${hingeX.toFixed(1)}, front at x=${bedBB.min.x.toFixed(1)}, rotation.z will be NEGATIVE to lift front`)
-
-  // Wheels — procedural cylinders at detected arch positions. Size is
-  // bbox-derived so a bigger truck gets bigger wheels.
-  const wheels = buildDetectedWheels(wheelPositions, truckHeight, truckDepth, allMaterials)
-
-  // LIDAR dome — sits above the body's own max Y (cab/hood top), biased
-  // toward the cab side (-X). Position is entirely bbox-derived.
-  bodyGeo.computeBoundingBox()
-  const bodyBB = bodyGeo.boundingBox
-  const domeRadius = Math.max(truckHeight * 0.06, 0.2)
+  // ── LIDAR dome (procedural — no STL part for this) ─────────────────────────
   const lidarDome = new THREE.Mesh(
-    new THREE.SphereGeometry(domeRadius, 16, 16),
-    new THREE.MeshBasicMaterial({
-      color: 0x00ffff, wireframe: true, transparent: true, opacity: 0.25,
+    new THREE.SphereGeometry(4, 16, 16),
+    new THREE.MeshStandardMaterial({
+      color: 0x00ffff, transparent: true, opacity: 0.25,
+      side: THREE.DoubleSide,
     })
   )
-  lidarDome.position.set(
-    bodyBB.min.x + (bodyBB.max.x - bodyBB.min.x) * 0.35,
-    bodyBB.max.y + domeRadius * 0.2,
-    0
-  )
+  // Place on top of the cab (cab top ≈ 90+27=117)
+  lidarDome.position.set(95, 121, 0)
+  bodyGroup.add(lidarDome)
 
-  const truckGroup = new THREE.Group()
-  truckGroup.add(bodyMesh, bedMesh, lidarDome)
-  Object.values(wheels).forEach(w => { if (w) truckGroup.add(w) })
+  // ── Scale to viewport, center on XZ, ground at Y=0 ─────────────────────────
+  // Slightly smaller than before so the raised bed stays clear of HUD panels.
+  const box  = new THREE.Box3().setFromObject(truckGroup)
+  const size = box.getSize(new THREE.Vector3())
+  const maxDim = Math.max(size.x, size.y, size.z)
+  const scale  = 10.2 / maxDim
+  truckGroup.scale.setScalar(scale)
+
+  // Recompute after scaling
+  box.setFromObject(truckGroup)
+  const center = box.getCenter(new THREE.Vector3())
+  truckGroup.position.x -= center.x
+  truckGroup.position.z -= center.z
+  truckGroup.position.y -= box.min.y
+
   scene.add(truckGroup)
 
-  console.log(
-    `[vehicle] Feature-based segmentation: ` +
-    `body=${bodyGeo.attributes.position.count / 3} tris, ` +
-    `bed=${bedGeo.attributes.position.count / 3} tris, ` +
-    `wheels=${Object.values(wheels).filter(Boolean).length}/4`
-  )
+  // ── Wheel radius in scene units ─────────────────────────────────────────────
+  const wheelRadius = 30.6 * scale
 
+  const totalTris = loaded.reduce((sum, r) => {
+    const pos = r.geo.getAttribute('position')
+    return sum + (pos ? pos.count / 3 : 0)
+  }, 0)
+  console.log(`[vehicle] Truck assembled: ${loaded.length} parts, ~${Math.round(totalTris / 1000)}K tris, scale=${scale.toFixed(4)}, wheelRadius=${wheelRadius.toFixed(2)}`)
+
+  // ── Populate _parts interface ───────────────────────────────────────────────
   _parts = {
     truckGroup,
-    bodyGroup:  bodyMesh,
-    chassis:    bodyMesh,
-    cab:        bodyMesh,
-    engineHood: bodyMesh,
-    dumpBed:    bedMesh,
-    bedGroup:   bedMesh,
-    bedRotationSign: -1,   // hinge at rear → negative rotation.z lifts front (Cat 797 style)
+    bodyGroup,
+    chassis:     chassisMesh || bodyGroup,
+    cab:         cabMesh || bodyGroup,
+    engineHood:  engineMesh || cabMesh || bodyGroup,
+    bedGroup,
+    hydraulicGroup,
+    bedRotationSign: 1,
     lidarDome,
-    wheels,
-    wheelRadius: truckHeight * 0.28,
-    allMaterials,
+    wheels:      { fl: wheelFL, fr: wheelFR, rl: wheelRL, rr: wheelRR },
+    wheelRadius,
+    wheelSpinAxis: 'z',   // STL wheels: geometry face in XY, axle along Z
+    allMaterials: [],     // no holographic materials in STL path
   }
   return _parts
 }
 
-function buildDetectedWheels(positions, truckHeight, truckDepth, allMaterials) {
-  const wheels = { fl: null, fr: null, rl: null, rr: null }
-  const radius = truckHeight * 0.28
-  const width  = truckDepth  * 0.14
-  for (const [key, { x, z }] of Object.entries(positions)) {
-    const mat = createHolographicMaterial(0x007799)
-    allMaterials.push(mat)
-    const group = new THREE.Group()
-    group.position.set(x, radius, z)
-    group.rotation.x = Math.PI / 2
+function addVerticalColorGradient(geometry, topColorHex, bottomColorHex) {
+  geometry.computeBoundingBox()
+  const minY = geometry.boundingBox.min.y
+  const maxY = geometry.boundingBox.max.y
+  const range = maxY - minY || 1
+  const top = new THREE.Color(topColorHex)
+  const bottom = new THREE.Color(bottomColorHex)
+  const color = new THREE.Color()
+  const pos = geometry.getAttribute('position')
+  const colors = []
 
-    const rim = new THREE.Mesh(
-      new THREE.CylinderGeometry(radius, radius, width, 24),
-      mat
-    )
-    group.add(rim)
-
-    addWheelRim(group, radius, width, allMaterials)
-
-    wheels[key] = group
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i)
+    const t = THREE.MathUtils.smoothstep((y - minY) / range, 0, 1)
+    color.copy(bottom).lerp(top, t)
+    colors.push(color.r, color.g, color.b)
   }
-  return wheels
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
 }
 
-function addWheelRim(wheelGroup, radius, width, allMaterials) {
-  const rimMat = new THREE.MeshBasicMaterial({
-    color: 0x00ffff,
-    transparent: true,
-    opacity: 0.7,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
+function makeBoxMesh(size, position, material, parent) {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material)
+  mesh.position.set(...position)
+  mesh.castShadow = true
+  mesh.receiveShadow = true
+  parent.add(mesh)
+  return mesh
+}
+
+function makeCylinderBetween(start, end, radius, material, parent, radialSegments = 10) {
+  const a = new THREE.Vector3(...start)
+  const b = new THREE.Vector3(...end)
+  const dir = b.clone().sub(a)
+  const mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius, radius, dir.length(), radialSegments),
+    material
+  )
+  mesh.position.copy(a.clone().lerp(b, 0.5))
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize())
+  mesh.castShadow = true
+  parent.add(mesh)
+  return mesh
+}
+
+function addHydraulicDetails(bodyGroup) {
+  const group = new THREE.Group()
+  group.position.set(16, 45, 0)
+  group.visible = false
+  bodyGroup.add(group)
+
+  const housingMat = makeChassisMat()
+  housingMat.color.set(0x4e565b)
+  housingMat.emissive.set(0x101417)
+  housingMat.emissiveIntensity = 0.2
+  const rodMat = new THREE.MeshStandardMaterial({
+    color: 0x6d747c,
+    roughness: 0.28,
+    metalness: 0.58,
   })
-  allMaterials.push(rimMat)
 
-  const barThick = radius * 0.08
-  const barLen   = radius * 1.7
-  const zOff     = width * 0.3
-
-  const bar1 = new THREE.Mesh(
-    new THREE.BoxGeometry(barLen, barThick, barThick),
-    rimMat
-  )
-  bar1.position.z = zOff
-  wheelGroup.add(bar1)
-
-  const bar2 = new THREE.Mesh(
-    new THREE.BoxGeometry(barThick, barLen, barThick),
-    rimMat
-  )
-  bar2.position.z = zOff
-  wheelGroup.add(bar2)
-
-  const hubGeo = new THREE.CylinderGeometry(radius * 0.15, radius * 0.15, barThick * 1.5, 12)
-  const hub = new THREE.Mesh(hubGeo, rimMat)
-  hub.position.z = zOff
-  hub.rotation.x = Math.PI / 2
-  wheelGroup.add(hub)
-
-  const outerRing = new THREE.Mesh(
-    new THREE.TorusGeometry(radius * 0.92, barThick * 0.5, 8, 32),
-    rimMat
-  )
-  outerRing.position.z = zOff
-  wheelGroup.add(outerRing)
+  // The reference model hides the lift hardware when the bed is down. These
+  // slim posts extend only during the dump animation, avoiding fixed cylinders
+  // sitting awkwardly beside the wheels in the lowered state.
+  for (const side of [1, -1]) {
+    const z = side * 23
+    makeBoxMesh([10, 5, 8], [-3, 0, z], housingMat, group)
+    makeCylinderBetween([0, 2, z], [12, 28, z], 2.3, housingMat, group, 14)
+    makeCylinderBetween([11, 24, z], [26, 55, z], 1.25, rodMat, group, 14)
+    makeBoxMesh([8, 5, 7], [26, 55, z], housingMat, group)
+  }
+  return group
 }
 
-// ── Procedural fallback ───────────────────────────────────────────────────────
-// Used only when the GLTF fails to load. Builds a recognisable Caterpillar
-// 797-style haul truck from primitives. Front faces +X.
+function addWheelHubCaps({ wheelFL, wheelFR, wheelRL, wheelRR }) {
+  const hubMat = makeWheelDetailMat()
+  const ringMat = new THREE.MeshStandardMaterial({
+    color: 0x1f2329,
+    roughness: 0.68,
+    metalness: 0.22,
+  })
+
+  function addHub(parent, z, radius = 13) {
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, 2.6, 32), hubMat.clone())
+    hub.rotation.x = Math.PI / 2
+    hub.position.z = z
+    hub.userData.isWheelDetail = true
+    parent.add(hub)
+
+    const inner = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.58, radius * 0.58, 3.1, 28), ringMat.clone())
+    inner.rotation.x = Math.PI / 2
+    inner.position.z = z + Math.sign(z) * 0.35
+    inner.userData.isWheelDetail = true
+    parent.add(inner)
+  }
+
+  addHub(wheelFL, 12.8, 12.5)
+  addHub(wheelFR, -12.8, 12.5)
+  addHub(wheelRL, 27.1, 12.8)
+  addHub(wheelRR, -27.1, 12.8)
+}
+
+function addOperatorAccessDetails(bodyGroup) {
+  const accessMat = makeAccessMat()
+  const deckMat = makeBodyMat()
+  const stepMat = new THREE.MeshStandardMaterial({
+    color: 0x59636d,
+    roughness: 0.48,
+    metalness: 0.32,
+    emissive: 0x0b0f12,
+    emissiveIntensity: 0.28,
+  })
+  const glassMat = new THREE.MeshStandardMaterial({
+    color: 0x101820,
+    roughness: 0.25,
+    metalness: 0.05,
+    transparent: true,
+    opacity: 0.65,
+  })
+
+  function box(size, position, material = accessMat) {
+    return makeBoxMesh(size, position, material, bodyGroup)
+  }
+
+  function cylinderBetween(start, end, radius = 0.9, material = accessMat) {
+    return makeCylinderBetween(start, end, radius, material, bodyGroup, 8)
+  }
+
+  function addRailRun(z, x0, x1, yDeck, yRail) {
+    const postXs = [x0, x0 + (x1 - x0) * 0.35, x0 + (x1 - x0) * 0.7, x1]
+    for (const x of postXs) cylinderBetween([x, yDeck, z], [x, yRail, z], 0.75)
+    cylinderBetween([x0, yRail, z], [x1, yRail, z], 0.75)
+  }
+
+  function addFrontGrille() {
+    const grilleBackMat = new THREE.MeshStandardMaterial({
+      color: 0x182026,
+      roughness: 0.7,
+      metalness: 0.1,
+    })
+    const grilleSlatMat = new THREE.MeshStandardMaterial({
+      color: 0x7f8990,
+      roughness: 0.46,
+      metalness: 0.34,
+      emissive: 0x10161a,
+      emissiveIntensity: 0.18,
+    })
+
+    box([1.5, 28, 46], [151, 55, 0], grilleBackMat)
+    box([2.6, 3.2, 52], [152, 70.5, 0], accessMat)
+    box([2.6, 3.2, 52], [152, 39.5, 0], accessMat)
+    box([2.6, 32, 3.2], [152, 55, 26], accessMat)
+    box([2.6, 32, 3.2], [152, 55, -26], accessMat)
+
+    for (let y = 42; y <= 68; y += 4) {
+      box([2.8, 0.75, 40], [153, y, 0], grilleSlatMat)
+    }
+    for (let z = -18; z <= 18; z += 6) {
+      box([2.9, 24, 0.75], [153.2, 55, z], grilleSlatMat)
+    }
+  }
+
+  function addFrontStair(side) {
+    const zOuter = side * 67
+    const zInner = side * 54
+    const zCenter = (zOuter + zInner) / 2
+    const x = 153
+
+    // Front-mounted stair channel: near-vertical rails with visible rung gaps.
+    cylinderBetween([x, 17, zOuter], [x, 66, zOuter], 0.75, accessMat)
+    cylinderBetween([x, 17, zInner], [x, 66, zInner], 0.75, accessMat)
+    for (let i = 0; i < 8; i++) {
+      const y = 21 + i * 5.4
+      box([2.8, 1.2, 13], [x + 0.4, y, zCenter], stepMat)
+    }
+
+    box([15, 2.5, 18], [153, 14, zCenter], stepMat)
+    box([17, 3, 20], [146, 65, zCenter], deckMat)
+  }
+
+  // Side walkways beside the operator cab, matching the cream deck in the
+  // reference print while keeping the rails dark for visual contrast.
+  box([72, 3, 9], [96, 63, 70], deckMat)
+  box([72, 3, 9], [96, 63, -70], deckMat)
+  box([24, 3, 126], [134, 63, 0], deckMat)
+
+  // Handrails around both side walkways and the front service deck.
+  addRailRun(76, 62, 128, 64, 88)
+  addRailRun(-76, 62, 128, 64, 88)
+  for (const x of [124, 138, 150]) {
+    cylinderBetween([x, 64, 58], [x, 88, 58], 0.75)
+    cylinderBetween([x, 64, -58], [x, 88, -58], 0.75)
+  }
+  cylinderBetween([124, 88, 58], [150, 88, 58], 0.75)
+  cylinderBetween([124, 88, -58], [150, 88, -58], 0.75)
+  cylinderBetween([150, 88, 58], [150, 88, -58], 0.75)
+
+  // Front access face: grille plus side stair channels with clear tread gaps.
+  addFrontGrille()
+  addFrontStair(1)
+  addFrontStair(-1)
+
+  // Dark cab glazing helps the operator station read as a cab instead of a
+  // plain block in the holographic lighting.
+  box([24, 16, 1.1], [95, 91, 65.5], glassMat)
+  box([24, 16, 1.1], [95, 91, -65.5], glassMat)
+  box([1.1, 16, 42], [132.5, 91, 0], glassMat)
+  box([1.2, 20, 18], [133.2, 91, 33], glassMat)
+  box([1.2, 20, 18], [133.2, 91, -33], glassMat)
+
+  // Door outlines and recessed panel lines on the operator station.
+  const trimMat = makeAccessMat()
+  for (const z of [66.5, -66.5]) {
+    box([1.2, 24, 1.4], [79, 89, z], trimMat)
+    box([1.2, 24, 1.4], [111, 89, z], trimMat)
+    box([32, 1.4, 1.4], [95, 101, z], trimMat)
+    box([32, 1.4, 1.4], [95, 77, z], trimMat)
+    box([5, 1.8, 1.8], [113, 88, z], trimMat)
+  }
+
+  // Minimal interior silhouette: just enough to say "operator station" through
+  // the dark glazing without turning the model into a detailed cabin sim.
+  box([11, 14, 9], [93, 78, 0], trimMat)
+  box([8, 9, 5], [103, 90, 0], trimMat)
+  cylinderBetween([111, 84, -6], [111, 84, 6], 1.2, trimMat)
+
+  // Small service lamps / camera pods under the cab balcony.
+  for (const z of [-28, -12, 12, 28]) {
+    const lamp = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 5, 16), accessMat)
+    lamp.position.set(126, 56, z)
+    lamp.rotation.x = Math.PI / 2
+    lamp.castShadow = true
+    bodyGroup.add(lamp)
+  }
+}
+
+// ── Procedural fallback ──────────────────────────────────────────────────────
 function buildProceduralTruck(scene) {
   const allMaterials = []
   function holo(color = 0x00ffff) {
@@ -502,11 +692,15 @@ function buildProceduralTruck(scene) {
     return mat
   }
 
+  function makeMesh(geometry, material) {
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.castShadow = false
+    return mesh
+  }
+
   const truckGroup = new THREE.Group()
 
-  // ── Body ────────────────────────────────────────────────────────────────────
   const bodyGroup = new THREE.Group()
-
   const chassis = makeMesh(new THREE.BoxGeometry(8, 1.2, 4), holo())
   chassis.position.set(0, 0, 0)
   bodyGroup.add(chassis)
@@ -534,11 +728,7 @@ function buildProceduralTruck(scene) {
   bodyGroup.position.set(0, 1.8, 0)
   truckGroup.add(bodyGroup)
 
-  // ── Dump bed ────────────────────────────────────────────────────────────────
-  // bedGroup pivot at chassis rear — bed extends into +X so rotation.z raises
-  // the far end (front, toward cab) like a real haul-truck dump.
   const bedGroup = new THREE.Group()
-
   const BED_LEN = 7.0, BED_WIDTH = 4.6, WALL_H = 2.2, FLOOR_Y = 0.0
   const dumpBed = makeMesh(new THREE.BoxGeometry(BED_LEN, 0.35, BED_WIDTH), holo(0x008899))
   dumpBed.position.set(BED_LEN / 2, FLOOR_Y, 0)
@@ -577,7 +767,6 @@ function buildProceduralTruck(scene) {
   bedGroup.position.set(-4.0, 2.6, 0)
   truckGroup.add(bedGroup)
 
-  // ── Lidar dome ──────────────────────────────────────────────────────────────
   const lidarDome = makeMesh(
     new THREE.SphereGeometry(0.5, 16, 16),
     new THREE.MeshBasicMaterial({
@@ -587,13 +776,12 @@ function buildProceduralTruck(scene) {
   lidarDome.position.set(-1.0, 3.6, 0)
   truckGroup.add(lidarDome)
 
-  // ── Wheels ──────────────────────────────────────────────────────────────────
   const wheelGroup = new THREE.Group()
   function makeWheel(radiusY, width, color = 0x004455) {
     const mat = createHolographicMaterial(color)
     allMaterials.push(mat)
     const wheel = makeMesh(new THREE.CylinderGeometry(radiusY, radiusY, width, 20), mat)
-    wheel.rotation.x = Math.PI / 2   // axle along Z (truck width)
+    wheel.rotation.x = Math.PI / 2
     return wheel
   }
 
@@ -619,6 +807,8 @@ function buildProceduralTruck(scene) {
     bedGroup,
     lidarDome,
     wheels: { fl: wfl, fr: wfr, rl: wrl1, rr: wrr1 },
+    wheelRadius: 1.4,
+    wheelSpinAxis: 'y',
     allMaterials,
   }
   return _parts

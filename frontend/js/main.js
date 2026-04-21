@@ -11,7 +11,7 @@
  */
 
 import { initScene, startAnimationLoop } from './scene.js'
-import { buildTruck, getTruckParts }      from './vehicle.js'
+import { buildTruck, getTruckParts, setHolographicMode } from './vehicle.js'
 import {
   initEffects,
   tickEffects,
@@ -144,10 +144,22 @@ buildTruck(scene).then(() => {
     apiPost('/api/tire-fail', { active: tireFailActive, wheel: 'rl' })
   })
 
+  let hologramActive = false
+  const btnHologram = document.getElementById('btn-hologram')
+  btnHologram.addEventListener('click', () => {
+    hologramActive = !hologramActive
+    btnHologram.classList.toggle('active', hologramActive)
+    updateAlertGlow(null, parts)
+    setHolographicMode(hologramActive)
+    updateTirePressure(currentState.telemetry?.tire_pressure_psi)
+    updateEngineTemp(currentState.telemetry?.engine_temp_c ?? 92)
+    updateAlertGlow(currentState.alert, parts)
+  })
+
   // Camera presets — purely client-side, no backend round-trip needed
   document.getElementById('btn-cam-top').addEventListener('click', () => setCameraPreset('TOP'))
   document.getElementById('btn-cam-side').addEventListener('click', () => setCameraPreset('SIDE'))
-  document.getElementById('btn-cam-operator').addEventListener('click', () => setCameraPreset('OPERATOR'))
+  document.getElementById('btn-cam-access').addEventListener('click', () => setCameraPreset('ACCESS'))
 
   // ── Voice control ──────────────────────────────────────────────────────────
   const voiceStatusEl = document.getElementById('voice-status')
@@ -164,6 +176,7 @@ buildTruck(scene).then(() => {
       cam_top:      () => setCameraPreset('TOP'),
       cam_side:     () => setCameraPreset('SIDE'),
       cam_operator: () => setCameraPreset('OPERATOR'),
+      cam_access:   () => setCameraPreset('ACCESS'),
       status:       () => {
         const t = currentState.telemetry
         const statusMsg = `Engine temperature ${Math.round(t.engine_temp_c)} degrees. ` +
