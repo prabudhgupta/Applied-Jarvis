@@ -159,7 +159,6 @@ buildTruck(scene).then(() => {
   // Camera presets — purely client-side, no backend round-trip needed
   document.getElementById('btn-cam-top').addEventListener('click', () => setCameraPreset('TOP'))
   document.getElementById('btn-cam-side').addEventListener('click', () => setCameraPreset('SIDE'))
-  document.getElementById('btn-cam-operator').addEventListener('click', () => setCameraPreset('OPERATOR'))
   document.getElementById('btn-cam-access').addEventListener('click', () => setCameraPreset('ACCESS'))
 
   // ── Voice control ──────────────────────────────────────────────────────────

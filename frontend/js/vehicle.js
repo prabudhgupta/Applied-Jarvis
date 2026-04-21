@@ -75,8 +75,8 @@ const ASSEMBLY = {
   'obj_4_Body5.stl_A.stl': { type: 'engine', pos: [118, 80, 0] },
 
   // ── Exhaust stacks (lowered, closer to cab) ───────────────────────────────
-  'obj_45_Component33.stl': { type: 'body', pos: [78, 80, 38] },
-  'obj_46_Component32.stl': { type: 'body', pos: [78, 80, -38] },
+  'obj_45_Component33.stl': { type: 'body', pos: [78, 68, 38] },
+  'obj_46_Component32.stl': { type: 'body', pos: [78, 68, -38] },
 
   // ── Front face (grille + panel below engine) ────────────────────────────────
   'obj_5_Body5.stl_B.stl': { type: 'body', pos: [137, 80, 0] },
@@ -130,7 +130,7 @@ const ASSEMBLY = {
 // bed center Y = 100, half-height = 88/2 = 44 → bottom = 56
 const BED_HINGE_X = -96.55
 const BED_HINGE_Y = 66
-const BED_RESTING_CLEARANCE_Y = 12
+const BED_RESTING_CLEARANCE_Y = 4
 
 // Rear wheel group centers (midpoint between inner/outer duals)
 const RL_CENTER_Z = (58.65 + 29.75) / 2   // 44.2
@@ -393,7 +393,7 @@ async function buildAssembledSTL(scene) {
 
   // ── LIDAR dome (procedural — no STL part for this) ─────────────────────────
   const lidarDome = new THREE.Mesh(
-    new THREE.SphereGeometry(4, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.SphereGeometry(4, 16, 16),
     new THREE.MeshStandardMaterial({
       color: 0x00ffff, transparent: true, opacity: 0.25,
       side: THREE.DoubleSide,
@@ -514,9 +514,9 @@ function addHydraulicDetails(bodyGroup) {
   for (const side of [1, -1]) {
     const z = side * 23
     makeBoxMesh([10, 5, 8], [-3, 0, z], housingMat, group)
-    makeCylinderBetween([0, 2, z], [14, 34, z], 2.3, housingMat, group, 14)
-    makeCylinderBetween([13, 30, z], [28, 64, z], 1.25, rodMat, group, 14)
-    makeBoxMesh([8, 5, 7], [30, 64, z], housingMat, group)
+    makeCylinderBetween([0, 2, z], [12, 28, z], 2.3, housingMat, group, 14)
+    makeCylinderBetween([11, 24, z], [26, 55, z], 1.25, rodMat, group, 14)
+    makeBoxMesh([8, 5, 7], [26, 55, z], housingMat, group)
   }
   return group
 }

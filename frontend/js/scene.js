@@ -128,7 +128,9 @@ export function initScene(canvas) {
   scene.add(ground)
 
   // ── Grid floor ─────────────────────────────────────────────────────────────
-  const grid = new THREE.GridHelper(80, 40, 0x087078, 0x07333a)
+  // Use the same color for center axes and grid lines so no bright axis line
+  // cuts across the scene (the road edge lines serve that role instead).
+  const grid = new THREE.GridHelper(80, 40, 0x07333a, 0x07333a)
   grid.position.y = -0.02
   scene.add(grid)
   _grid = grid
@@ -150,8 +152,7 @@ export function initScene(canvas) {
   roadSurface.rotation.x = -Math.PI / 2
   roadGroup.add(roadSurface)
 
-  // Road edge lines: these define the haul-road width without cutting through
-  // the truck footprint like a center marker would.
+  // Road edge lines
   const edgeLineMat = new THREE.MeshBasicMaterial({
     color: 0x00ffff,
     transparent: true,
@@ -169,6 +170,23 @@ export function initScene(canvas) {
   rightEdge.rotation.x = -Math.PI / 2
   rightEdge.position.z = -4
   roadGroup.add(rightEdge)
+
+  // Center dashes — white dotted line
+  const dashMat = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.35,
+    depthWrite: false,
+  })
+  for (let i = -30; i < 30; i++) {
+    const dash = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.2, 0.1),
+      dashMat
+    )
+    dash.rotation.x = -Math.PI / 2
+    dash.position.x = i * 2
+    roadGroup.add(dash)
+  }
 
   scene.add(roadGroup)
   _roadGroup = roadGroup
