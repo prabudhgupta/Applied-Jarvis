@@ -20,15 +20,21 @@ Target length: 20-25 minutes
 
 > "Let me show you the final product first, then I'll walk through how I built it.
 >
-> This is the truck — custom GLSL holographic shader with Fresnel edge glow, animated scanlines, and bloom post-processing. You can orbit 360 degrees, zoom in and out."
+> This is a Liebherr T284 — the largest ultra-class mining haul truck in the world, 363 tonnes payload. The 3D model you're looking at is assembled from 40 individual STL parts sourced from a CAD model of the real truck. PBR materials — physically-based rendering with shadow mapping, directional lighting, and a bloom post-processing pipeline. You can orbit 360 degrees, zoom in and out.
+>
+> There's also a holographic mode — I'll show that in a moment."
 
 **[Click camera preset buttons]**
 
-> "Three camera presets — top-down for spatial awareness, side profile for loading assessment, and operator-cab view. Smooth easing between them."
+> "Camera presets — top-down for spatial awareness, side profile for loading assessment, and a front access view showing the operator stairway. Smooth easing between them."
 
 **[Click TOGGLE BED]**
 
-> "The dump bed raises with the hinge at the rear — matching real Cat 797F mechanics. The load weight drops to zero in the HUD when the bed is raised."
+> "The dump bed raises with the hinge at the rear — matching real Liebherr T284 mechanics. Hydraulic cylinders extend as the bed lifts. The load weight drops to zero in the HUD when the bed is raised."
+
+**[Click HOLOGRAM]**
+
+> "And here's the holographic mode — toggles every mesh to a custom GLSL shader with Fresnel edge glow, animated scanlines, and additive blending. This isn't just an aesthetic choice — the see-through geometry lets the operator identify which component has a problem from any angle. An opaque model hides the engine behind the cab, or the rear tires behind the bed. The holographic view lets you see everything at once."
 
 **[Click TOGGLE LIDAR]**
 
@@ -102,15 +108,23 @@ Target length: 20-25 minutes
 
 > "A few key tradeoffs I want to call out:
 >
-> Procedural truck model instead of a GLTF import — I evaluated several Sketchfab Cat 797F models, but ran into two blockers. First, licensing: most detailed mining truck models are under restrictive licenses that prohibit modification and redistribution in derivative works. Second, and more importantly, the GLTF meshes aren't segmented by physical component — a single mesh might span the entire truck from bumper to bed. That makes it impossible to independently animate the dump bed, rotate individual wheels, or target specific components for alert overlays. So I built the truck procedurally with each part as a separate named object — cab, engine hood, bed group, individual wheels. Every component is independently animatable. In production, you'd work with the CAD team to get properly segmented models, but for this demo, procedural geometry gave me full control over the component hierarchy.
+> **STL assembly vs. pre-built GLTF.** This was the biggest design decision. I evaluated three approaches:
 >
-> The holographic aesthetic isn't just visual — it's functional. The see-through geometry means the operator can identify which specific component has a problem from any angle. An opaque model would hide the engine behind the cab, or the rear tires behind the bed. Translucent holographic lets you see everything at once.
+> Option one — grab a pre-built GLTF/GLB from Sketchfab or TurboSquid. Fastest path to a visual. But I ran into two blockers. Licensing — most detailed mining truck models prohibit modification and redistribution in derivative works. And more critically, the meshes aren't segmented by physical component. A single GLTF mesh might span from bumper to bed. You can't rotate the dump bed without rotating half the chassis with it. You can't spin individual wheels, you can't target a specific tire for an alert overlay. For a digital twin where every component needs to move independently, that's a dealbreaker.
 >
-> Full state broadcast, not deltas — clean for a few toggles. Production with hundreds of sensors streaming at high frequency would use delta updates with a message broker.
+> Option two — procedural geometry from primitives. Boxes, cylinders, spheres. Full control over the component hierarchy, but it looks like a Minecraft truck. Fine for proving the architecture, but not compelling for a demo.
 >
-> Custom GLSL shader instead of a library — the threejs-vanilla-holographic-material library hasn't been updated for Three.js r152 which removed the outputEncoding API it depends on. 80 lines of GLSL was simpler to own than to patch a dead library.
+> Option three — what I actually did. I found CAD files for a Liebherr T284 — the real truck, the actual engineering geometry used for 3D printing. Exported 48 individual STL parts. Each part is a separate physical component: six wheels, the dump bed, the cab, the engine hood, chassis rails, exhaust stacks, deck plates. I wrote an assembly pipeline that loads all 40 active parts in parallel, converts from CAD Z-up to Three.js Y-up coordinates, centers each geometry, and positions them using a hand-tuned assembly table. The result is a truck that looks like the real thing AND has full component-level independence for animations and alerts.
 >
-> In-memory state — resets on restart. Production would use Redis. The tradeoff was made consciously for demo scope.
+> The research process: I started by looking at Liebherr's public documentation and reference photos to understand the T284's proportions and component layout. Then I sourced a CAD model designed for 3D printing — the same model I actually printed physically to verify the assembly. Each STL file has a generic name like 'obj_12_Component18.stl' — no metadata about what it is. I had to load each part, visually identify it, measure its bounding box, and figure out where it goes relative to the other parts. 40 parts, all positioned by hand. That's why there's a 130-line assembly table in vehicle.js mapping filenames to positions and component types.
+>
+> **Dual rendering modes.** The default is PBR — physically-based rendering with shadow maps, hemisphere lighting, and realistic materials. Yellow body panels, dark rubber tires, metallic chassis. But there's a holographic toggle that swaps every mesh to a custom GLSL shader with Fresnel edge glow, animated scanlines, and additive blending. The holographic mode is functional, not just aesthetic — see-through geometry lets operators see all components from any angle.
+>
+> **Full state broadcast, not deltas** — clean for a few toggles. Production with hundreds of sensors streaming at high frequency would use delta updates with a message broker.
+>
+> **Custom GLSL shader instead of a library** — the threejs-vanilla-holographic-material library hasn't been updated for Three.js r152 which removed the outputEncoding API it depends on. 80 lines of GLSL was simpler to own than to patch a dead library.
+>
+> **In-memory state** — resets on restart. Production would use Redis. The tradeoff was made consciously for demo scope.
 >
 > One thing I want to highlight about process — I maintained a CLAUDE.md file throughout development. Every time I hit a bug or made a wrong decision, I documented the rule to prevent repeating it. Things like 'don't call renderer.render() when EffectComposer is active,' or 'bedGroup pivot must be at the rear edge, not the center.' It's a living document of mistakes and corrections — basically a self-improving instruction set for the AI tooling I used to build this."
 
@@ -149,9 +163,11 @@ Target length: 20-25 minutes
 
 > "A few places where things went sideways and how I recovered:
 >
-> **The bed hinge.** My first implementation pivoted at the center of the bed — which created a scissors-lift motion instead of a realistic dump truck tilt. I looked at reference photos of a Cat 797F mid-dump and realized the hinge needs to be at the rear-bottom edge, with the bed extending forward. The fix was repositioning the group origin. Took about five iterations to get the rotation direction and sign correct — I documented the rule in CLAUDE.md so I wouldn't repeat it.
+> **The STL assembly puzzle.** 48 STL files with names like 'obj_12_Component18.stl' — zero metadata about what each part is. No assembly instructions, no coordinate system documentation. I had to load each part individually, visually identify it against reference photos of the real Liebherr T284, measure its bounding box, and figure out where it goes. The CAD files are in Z-up coordinates, Three.js uses Y-up — so every non-wheel part needs a -90° X rotation. The bed geometry came in facing backwards — the protective front wall was pointing at the tailgate. Had to add a 180° Y flip after centering. The wheels were the hardest — six wheels (dual rears), each needing precise Z-axis positioning so the inner and outer duals don't overlap. I ended up with a 130-line assembly table that I tuned iteratively, comparing against photos of the physical 3D print I made of the same model.
 >
-> **The GLTF model.** I found a detailed Cat 797F model on Sketchfab — 413,000 triangles, 43 meshes. Loaded it up, looked great... until I tried to animate the bed. The meshes aren't segmented by physical component. A single mesh spans the entire truck from bumper to bed. I couldn't rotate the dump bed without rotating half the chassis with it. I couldn't spin individual wheels without chunks of the truck flying apart. I tried writing a feature-based segmentation pipeline using triangle centroid classification — splitting geometry by bounding-box-relative thresholds. It worked technically but the results were rough. That's when I pivoted to procedural geometry. Every part is its own mesh, its own material, independently animatable. The lesson: for a digital twin where components need to move independently, you need component-level geometry from the start.
+> **The bed hinge.** My first implementation pivoted at the center of the bed — which created a scissors-lift motion instead of a realistic dump truck tilt. I looked at reference photos of a Liebherr T284 mid-dump and realized the hinge needs to be at the rear-bottom edge, with the bed extending forward. The fix was repositioning the group origin. Took about five iterations to get the rotation direction and sign correct — I documented the rule in CLAUDE.md so I wouldn't repeat it.
+>
+> **The GLTF dead end.** Before going the STL route, I tried a pre-built GLTF from Sketchfab — 413,000 triangles, looked great visually. But the meshes aren't segmented by physical component. I wrote a feature-based segmentation pipeline using triangle centroid classification — splitting geometry by bounding-box-relative thresholds to separate the bed from the body, detect wheel arches. It worked technically but the results were rough — triangles ending up in the wrong component, visible seams. That's when I pivoted to sourcing the actual CAD files. The lesson: for a digital twin where components need to move independently, you need component-level geometry from the start. Pre-built visual models are designed to look good, not to be functional.
 >
 > **The shader library.** I initially tried using threejs-vanilla-holographic-material. It crashed immediately — the library uses `renderer.outputEncoding` which was removed in Three.js r152. The library hasn't been updated. Rather than forking and patching a dead dependency, I wrote 80 lines of custom GLSL. Fresnel edge glow, world-space scanlines, an alert color blend uniform. Owning the shader meant I could add the alert tinting feature later without fighting someone else's API.
 >
