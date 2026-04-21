@@ -146,6 +146,7 @@ End corrections with: "Now update AGENTS.md so you don't make that mistake again
 - Don't hardcode port 8000 in the Render start command — must use `$PORT`
 - Don't use `ws://` for production WebSocket URLs — always `wss://` on HTTPS deployments
 - Don't place `bedGroup` pivot at the bed's center — pivot at the rear edge for realistic dump motion
+- Don't change the bed toggle from rotational dump motion when fixing lowered-bed poke-through; add a separate resting clearance offset instead
 - Don't use single rear wheels — haul trucks have dual rear wheels (two per side); single rears look like a pickup truck
 - Don't use `interface` in TypeScript; prefer `type`
 - Don't use `any` type without explicit approval

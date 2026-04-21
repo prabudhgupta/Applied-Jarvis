@@ -10,7 +10,8 @@ let _scene = null
 let _parts = null
 
 // Bed animation — incline when lowered matching real truck bed slope
-const BED_LOWERED_ANGLE = -0.06  // slight rear tilt — back of bed rises, front stays close to body
+const BED_LOWERED_ANGLE = 0.015  // slight clearance so the bed does not sit on the rear tires
+const BED_RAISED_ANGLE = Math.PI * 0.085
 let bedTargetAngle  = BED_LOWERED_ANGLE
 let bedCurrentAngle = BED_LOWERED_ANGLE
 
@@ -119,7 +120,7 @@ export function initEffects(scene, parts) {
 // ── State-change setters (called from WebSocket handler) ─────────────────────
 
 export function updateBedAnimation(bedPosition) {
-  bedTargetAngle = bedPosition === 'raised' ? Math.PI * 0.18 : BED_LOWERED_ANGLE
+  bedTargetAngle = bedPosition === 'raised' ? BED_RAISED_ANGLE : BED_LOWERED_ANGLE
 }
 
 
@@ -142,8 +143,9 @@ export function updateTirePressure(tirePsi) {
     let color
     if (psi <= CRIT) color = new THREE.Color(0xff2244)
     else if (psi <= WARN) color = new THREE.Color(0xffb300)
-    else color = new THREE.Color(0xD4A020)   // normal = yellow matching wheel material
+    else color = new THREE.Color(_parts.holographicEnabled ? 0x00ffff : 0x74786f)
     wheel.traverse(child => {
+      if (child.userData?.isWheelDetail) return
       if (child.material?.uniforms?.uColor) {
         child.material.uniforms.uColor.value.copy(color)
       } else if (child.material?.color) {
@@ -235,6 +237,16 @@ export function tickEffects(delta) {
   }
   const sign = _parts.bedRotationSign ?? 1
   _parts.bedGroup.rotation.z = bedCurrentAngle * sign
+
+  if (_parts.hydraulicGroup) {
+    const progress = THREE.MathUtils.clamp(
+      (bedCurrentAngle - BED_LOWERED_ANGLE) / (BED_RAISED_ANGLE - BED_LOWERED_ANGLE),
+      0,
+      1
+    )
+    _parts.hydraulicGroup.visible = progress > 0.04
+    _parts.hydraulicGroup.scale.y = THREE.MathUtils.lerp(0.25, 1, progress)
+  }
 
   // LIDAR sweep rotation
   // Only update uAngle — the shader handles the visual rotation of the arc.
