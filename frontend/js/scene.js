@@ -74,6 +74,8 @@ export function initScene(canvas) {
   renderer.toneMappingExposure = 1.0
   // r152+ API — outputEncoding was removed
   renderer.outputColorSpace = THREE.SRGBColorSpace
+  renderer.shadowMap.enabled = true
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap
 
   // ── Orbit controls ─────────────────────────────────────────────────────────
   const controls = new OrbitControls(camera, renderer.domElement)
@@ -86,23 +88,49 @@ export function initScene(canvas) {
   controls.update()
 
   // ── Lighting ───────────────────────────────────────────────────────────────
-  // Intentionally dim — the holographic material is self-illuminating
-  const ambient = new THREE.AmbientLight(0x001a2e, 3)
+  // Balanced lighting for standard PBR materials + holographic fallback
+  const ambient = new THREE.AmbientLight(0x404040, 0.8)
   scene.add(ambient)
 
-  const rimLight = new THREE.DirectionalLight(0x00ffff, 0.4)
-  rimLight.position.set(-10, 15, -5)
-  scene.add(rimLight)
+  const hemiLight = new THREE.HemisphereLight(0xB1E1FF, 0xB97A20, 0.6)
+  scene.add(hemiLight)
+
+  const dirLight = new THREE.DirectionalLight(0xffffff, 1.8)
+  dirLight.position.set(10, 20, 10)
+  dirLight.castShadow = true
+  dirLight.shadow.mapSize.width = 2048
+  dirLight.shadow.mapSize.height = 2048
+  dirLight.shadow.camera.near = 0.5
+  dirLight.shadow.camera.far = 80
+  dirLight.shadow.camera.left = -20
+  dirLight.shadow.camera.right = 20
+  dirLight.shadow.camera.top = 20
+  dirLight.shadow.camera.bottom = -20
+  scene.add(dirLight)
+
+  const fillLight = new THREE.DirectionalLight(0x8888ff, 0.4)
+  fillLight.position.set(-10, 10, -10)
+  scene.add(fillLight)
+
+  // ── Ground plane (receives shadows) ─────────────────────────────────────────
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(120, 120),
+    new THREE.MeshStandardMaterial({ color: 0x080808, roughness: 0.95, metalness: 0.0 })
+  )
+  ground.rotation.x = -Math.PI / 2
+  ground.position.y = -0.05
+  ground.receiveShadow = true
+  scene.add(ground)
 
   // ── Grid floor ─────────────────────────────────────────────────────────────
   const grid = new THREE.GridHelper(80, 40, 0x003344, 0x001a22)
-  grid.position.y = -1.8
+  grid.position.y = -0.02
   scene.add(grid)
   _grid = grid
 
   // ── Haul road ──────────────────────────────────────────────────────────────
   const roadGroup = new THREE.Group()
-  roadGroup.position.y = -1.79
+  roadGroup.position.y = -0.01
 
   // Road surface — subtle dark plane under the truck
   const roadSurface = new THREE.Mesh(
@@ -190,9 +218,9 @@ export function initScene(canvas) {
 
   const bloom = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
-    0.5,   // strength — overall glow intensity
-    0.35,  // radius
-    0.72   // threshold — only genuinely bright pixels bloom
+    0.2,   // strength — subtle glow for alerts/LIDAR, not overpowering
+    0.4,   // radius
+    0.85   // threshold — only very bright pixels bloom
   )
   composer.addPass(bloom)
   composer.addPass(new OutputPass())   // must be last
